@@ -48,13 +48,13 @@ pip install -r requirements.txt
 3. Make the CLI executable:
 
 ```bash
-chmod +x wallpaper-changer.py
+chmod +x wallpaper_cli.py
 ```
 
 4. Test the installation:
 
 ```bash
-./wallpaper-changer.py --help
+./wallpaper_cli.py --help
 ```
 
 ## Configuration
@@ -97,7 +97,7 @@ Default: `~/.config/wallpaper-changer/config.json`
 Extract a .ddw wallpaper theme from a zip file:
 
 ```bash
-./wallpaper-changer.py extract --theme-path /path/to/theme.ddw --cleanup
+./wallpaper_cli.py extract --theme-path /path/to/theme.ddw --cleanup
 ```
 
 **Options:**
@@ -121,7 +121,7 @@ Night images: ['24hr-Tahoe-2026_7.jpeg', '24hr-Tahoe-2026_8.jpeg', ...]
 Change the current wallpaper to the next image in the time-of-day category:
 
 ```bash
-./wallpaper-changer.py change --theme-path /path/to/theme.ddw
+./wallpaper_cli.py change --theme-path /path/to/theme.ddw
 ```
 
 **Options:**
@@ -142,7 +142,7 @@ Wallpaper changed successfully!
 List all available images for a specific time-of-day category:
 
 ```bash
-./wallpaper-changer.py list --theme-path <theme-path> --time-of-day day
+./wallpaper_cli.py list --theme-path <theme-path> --time-of-day day
 ```
 
 **Options:**
@@ -158,7 +158,7 @@ Images for day: ['24hr-Tahoe-2026_3.jpeg', '24hr-Tahoe-2026_4.jpeg', ...]
 ### Available CLI Commands
 
 ```bash
-./wallpaper-changer.py --help
+./wallpaper_cli.py --help
 ```
 
 ## Advanced Usage
@@ -175,7 +175,7 @@ After=network.target plasmashell.service
 [Service]
 Type=simple
 User=your_username
-ExecStart=/path/to/wallpaper-changer.py change --theme-path /path/to/theme.ddw
+ExecStart=/path/to/wallpaper_cli.py change --theme-path /path/to/theme.ddw
 Restart=always
 RestartSec=10
 
@@ -196,12 +196,12 @@ The tool automatically detects the current time-of-day based on system time. To 
 
 1. Edit `~/.config/wallpaper-changer/config.json`
 2. Change `current_time_of_day` to desired category:
-   ```json
-   {
-     "current_time_of_day": "night"
-   }
-   ```
-3. Run `./wallpaper-changer.py change --theme-path /path/to/theme.ddw`
+    ```json
+    {
+      "current_time_of_day": "night"
+    }
+    ```
+3. Run `./wallpaper_cli.py change --theme-path /path/to/theme.ddw`
 
 ### Multiple Themes
 
@@ -209,13 +209,13 @@ You can maintain multiple themes in different directories:
 
 ```bash
 # Theme 1 - Day theme
-./wallpaper-changer.py extract --theme-path ~/wallpapers/day-theme.ddw --cleanup
+./wallpaper_cli.py extract --theme-path ~/wallpapers/day-theme.ddw --cleanup
 
 # Theme 2 - Night theme
-./wallpaper-changer.py extract --theme-path ~/wallpapers/night-theme.ddw --cleanup
+./wallpaper_cli.py extract --theme-path ~/wallpapers/night-theme.ddw --cleanup
 
 # Change to different themes based on time (add to systemd service)
-./wallpaper-changer.py change --theme-path ~/wallpapers/day-theme.ddw
+./wallpaper_cli.py change --theme-path ~/wallpapers/day-theme.ddw
 ```
 
 ## Troubleshooting
@@ -243,6 +243,8 @@ plasmashell &
 sudo dnf install plasma-workspace
 ```
 
+**Note:** The tool now uses `plasma-apply-wallpaperimage` for setting wallpapers, which is more reliable than `kwriteconfig5` alone.
+
 ### Invalid Config File
 
 **Error:** `Config validation failed: Missing required field 'interval'`
@@ -258,9 +260,9 @@ Ensure all required fields are present and valid.
 
 **Error:** `theme.json not found in zip file`
 
-**Solution:** Verify the .ddw file is valid and contains a `theme.json` file:
+**Solution:** Verify the .ddw file is valid and contains a JSON file (theme.json or filename.json):
 ```bash
-unzip -l theme.ddw | grep theme.json
+unzip -l theme.ddw | grep "\.json"
 ```
 
 ### Wallpaper Not Changing
@@ -381,7 +383,7 @@ Total: 34/35 tests passing (1 pre-existing failure in test_zip_extraction.py)
 
 ```
 kwallpaper/
-├── wallpaper-changer.py          # CLI entry point
+├── wallpaper_cli.py              # CLI entry point
 ├── wallpaper_changer.py          # Core functions
 ├── requirements.txt              # Python dependencies
 ├── README.md                     # This file
