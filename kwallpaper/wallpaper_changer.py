@@ -45,6 +45,42 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "wallpaper-changer"
 
 
 # ============================================================================
+# ASTRAL HELPER FUNCTIONS
+# ============================================================================
+
+DURATION_DAWN_MINUTES = 20
+DURATION_SUNRISE_MINUTES = 6
+DURATION_SUNSET_MINUTES = 6
+DURATION_DUSK_MINUTES = 20
+DURATION_IMAGE_9_MINUTES = 30
+
+
+def calculate_image_spacing(start_time: datetime, end_time: datetime,
+                            num_images: int, current_time: datetime) -> int:
+    """Calculate which image to show based on even spacing across a time period."""
+    if start_time >= end_time:
+        return 1
+    
+    period_duration = (end_time - start_time).total_seconds()
+    time_in_period = (current_time - start_time).total_seconds()
+    
+    if time_in_period <= 0:
+        return 1
+    if time_in_period >= period_duration:
+        return num_images
+    
+    position = time_in_period / period_duration
+    image_index = int((position - 1e-9) * num_images) + 1
+    return max(1, min(image_index, num_images))
+
+
+def get_period_duration(start_time: datetime, end_time: datetime) -> float:
+    """Calculate duration of a period in seconds."""
+    delta = end_time - start_time
+    return delta.total_seconds()
+
+
+# ============================================================================
 # CONFIGURATION MANAGEMENT
 # ============================================================================
 
@@ -420,8 +456,8 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     with open(theme_json_path, 'r') as f:
         theme_data = json.load(f)
 
-    # Select image based on current time
-    time_of_day = detect_time_of_day_sun()
+    
+    time_of_day = detect_time_of_day_sun(config_path)
 
     # Get image list for current time-of-day
     image_list = theme_data.get(f"{time_of_day}ImageList", [])
@@ -1370,12 +1406,13 @@ def run_change_command(args) -> int:
 
             last_image_path = None
             last_time_of_day = None
+            timezone = config.get('location', {}).get('timezone', 'America/Los_Angeles')
 
             while True:
                 try:
                     # Get current time of day
-                    time_of_day = detect_time_of_day()
-                    current_time = datetime.now().strftime("%H:%M:%S")
+                    time_of_day = detect_time_of_day_sun(str(config_path_obj))
+                    current_time = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
 
                     # Check if time-of-day changed
                     if time_of_day != last_time_of_day:
