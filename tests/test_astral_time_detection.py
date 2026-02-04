@@ -128,8 +128,8 @@ def test_detect_time_of_day_sun_no_location():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {}  # Empty location
         }, f)
         temp_path = f.name
@@ -163,8 +163,8 @@ def test_detect_time_of_day_sun_city_name():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "city": "New York",
                 "timezone": "America/New_York"
@@ -201,8 +201,8 @@ def test_detect_time_of_day_sun_latitude_longitude():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -240,8 +240,8 @@ def test_detect_time_of_day_sun_polar_regions():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 78.0,  # Near the Arctic Circle
                 "longitude": 0.0,
@@ -280,8 +280,8 @@ def test_detect_time_of_day_sun_civil_twilight():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "city": "London",
                 "timezone": "Europe/London"
@@ -1054,8 +1054,8 @@ def test_detect_time_of_day_sun_four_periods_with_location():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "city": "Test City",
                 "timezone": "UTC"
@@ -1103,8 +1103,8 @@ def test_detect_time_of_day_sun_night_before_dawn():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -1156,8 +1156,8 @@ def test_detect_time_of_day_sun_sunrise_between_dawn_and_sunrise():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -1206,8 +1206,8 @@ def test_detect_time_of_day_sun_day_between_sunrise_and_sunset():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -1247,8 +1247,8 @@ def test_detect_time_of_day_sun_sunset_between_sunset_and_dusk():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -1297,8 +1297,8 @@ def test_detect_time_of_day_sun_night_after_dusk():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 40.7128,
                 "longitude": -74.0060,
@@ -1347,8 +1347,8 @@ def test_detect_time_of_day_sun_boundary_dawn_equals_sunrise():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 0.0,  # Equator where dawn and sunrise are close
                 "longitude": 0.0,
@@ -1397,8 +1397,8 @@ def test_detect_time_of_day_sun_timezone_aware_comparison():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 51.5074,  # London
                 "longitude": -0.1278,
@@ -1438,8 +1438,8 @@ def test_detect_time_of_day_sun_polar_region_none_dawn():
             "interval": 5400,
             "retry_attempts": 3,
             "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day",
+            
+            
             "location": {
                 "latitude": 78.0,  # Near Arctic Circle
                 "longitude": 0.0,

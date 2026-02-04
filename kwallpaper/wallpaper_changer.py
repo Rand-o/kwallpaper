@@ -87,9 +87,7 @@ def get_period_duration(start_time: datetime, end_time: datetime) -> float:
 DEFAULT_CONFIG = {
     "interval": 5400,
     "retry_attempts": 3,
-    "retry_delay": 5,
-    "current_image_index": 0,
-    "current_time_of_day": "day"
+    "retry_delay": 5
 }
 
 
@@ -146,7 +144,7 @@ def validate_config(config: Dict[str, Any]) -> None:
     Raises:
         ValueError: If config is invalid
     """
-    required_fields = ['interval', 'retry_attempts', 'retry_delay', 'current_image_index', 'current_time_of_day']
+    required_fields = ['interval', 'retry_attempts', 'retry_delay']
 
     for field in required_fields:
         if field not in config:
@@ -163,17 +161,6 @@ def validate_config(config: Dict[str, Any]) -> None:
     # Validate retry_delay
     if not isinstance(config['retry_delay'], int) or config['retry_delay'] <= 0:
         raise ValueError("Config validation failed: 'retry_delay' must be a positive integer")
-
-    # Validate current_image_index
-    if not isinstance(config['current_image_index'], int) or config['current_image_index'] < 0:
-        raise ValueError("Config validation failed: 'current_image_index' must be a non-negative integer")
-
-    # Validate current_time_of_day
-    valid_categories = ['sunrise', 'day', 'sunset', 'night']
-    if config['current_time_of_day'] not in valid_categories:
-        raise ValueError(
-            f"Config validation failed: 'current_time_of_day' must be one of {valid_categories}"
-        )
 
 
 # ============================================================================
@@ -334,7 +321,7 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
             import sys
             print(f"DEBUG detect_time_of_day_sun: Using mock_sun, sunrise={mock_sun._sunrise}, sunset={mock_sun._sunset}", file=sys.stderr)
             # Use mock sun directly (no need to import Astral)
-            from datetime import timedelta, timezone as tz_timezone
+            from datetime import timezone as tz_timezone
             sunrise = mock_sun._sunrise
             sunset = mock_sun._sunset
             # Calculate dawn and dusk based on sunrise and sunset (use same logic as MockSun class)
@@ -367,6 +354,12 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
             # Use real Astral library
             location = LocationInfo("Default", "California", timezone, lat, lon)
             s = sun(location.observer, date=datetime.now().date())
+
+        # Fix: When sunset/dusk are earlier than sunrise/dawn in UTC, they're actually next day
+        if s['sunset'] and s['sunrise'] and s['sunset'] < s['sunrise']:
+            s['sunset'] = s['sunset'] + timedelta(days=1)
+        if s['dusk'] and s['dawn'] and s['dusk'] < s['dawn']:
+            s['dusk'] = s['dusk'] + timedelta(days=1)
 
         # Get current time in target timezone (use provided current_time if available)
         if current_time is not None:
@@ -510,8 +503,11 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         )
 
     # Match by index using the globbed list
-    # Sort files to ensure consistent ordering
-    image_files.sort()
+    # Sort files numerically by extracting index from filename
+    def get_img_idx(f):
+        try: return int(f.stem.split('_')[-1])
+        except: return 0
+    image_files.sort(key=get_img_idx)
 
     # Find the file at the correct index
     if image_index <= len(image_files):
@@ -1067,128 +1063,7 @@ def detect_time_of_day(hour: Optional[int] = None) -> str:
 
 
 # ============================================================================
-# IMAGE SELECTION
-# ============================================================================
 
-def select_next_image(theme_path: str, config_path: str) -> str:
-    """Select next image based on current time-of-day.
-
-    Args:
-        theme_path: Path to theme directory or zip file
-        config_path: Path to config file
-
-    Returns:
-        Path to selected image file
-
-    Raises:
-        FileNotFoundError: If theme.json not found
-        ValueError: If no images available
-    """
-    config_path_obj = Path(config_path)
-    theme_path_obj = Path(theme_path)
-
-    # Resolve zip file to theme directory
-    if theme_path_obj.is_file() and theme_path_obj.suffix in ['.zip', '.ddw']:
-        result = extract_theme(str(theme_path_obj), cleanup=False)
-        theme_path_obj = Path(result['extract_dir'])
-
-    # Find theme.json - first look for any .json file in root, then theme.json recursively
-    theme_json_path = None
-
-    # Check root directory for any .json file
-    for json_file in theme_path_obj.glob("*.json"):
-        theme_json_path = json_file
-        break
-
-    # If not found, search recursively for theme.json
-    if not theme_json_path:
-        for found_path in theme_path_obj.rglob("theme.json"):
-            theme_json_path = found_path
-            break
-
-    if not theme_json_path:
-        raise FileNotFoundError("theme.json not found in theme directory")
-
-    # Load theme data
-    with open(theme_json_path, 'r') as f:
-        theme_data = json.load(f)
-
-    # Load config
-    config = load_config(str(config_path_obj))
-    current_image_index = config['current_image_index']
-    current_time_of_day = config['current_time_of_day']
-
-    # Get image list for current time-of-day
-    image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
-
-    # If current time-of-day has no images, switch to next category
-    while not image_list:
-        time_categories = ['sunrise', 'day', 'sunset', 'night']
-        try:
-            current_idx = time_categories.index(current_time_of_day)
-            if current_idx < len(time_categories) - 1:
-                current_time_of_day = time_categories[current_idx + 1]
-                image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
-            else:
-                # All categories empty, raise error
-                raise ValueError("No images available in any time-of-day category")
-        except ValueError:
-            raise ValueError("No images available in any time-of-day category")
-
-    # Validate image index
-    if current_image_index >= len(image_list):
-        current_image_index = 0
-
-    # Get image filename from index
-    image_index = image_list[current_image_index]
-
-    # Find image file
-    # Pattern: imageFilename contains index, e.g., "24hr-Tahoe-2026_*.jpeg"
-    filename_pattern = theme_data.get("imageFilename", "*.jpg")
-
-    # Extract base name and extension from pattern for later use
-    if filename_pattern:
-        pattern_base = Path(filename_pattern).stem
-        pattern_ext = Path(filename_pattern).suffix
-    else:
-        pattern_base = "theme"
-        pattern_ext = ".jpg"
-
-    # Try to find file matching pattern
-    image_files = list(theme_path_obj.glob(filename_pattern))
-
-    # If pattern doesn't match, try numbered files
-    if not image_files:
-        # Try numbered files: pattern_base_1.ext, pattern_base_2.ext, etc.
-        numbered_files = []
-        for i in range(1, 100):
-            numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
-
-        # Filter to only existing files
-        image_files = [f for f in numbered_files if f.exists()]
-
-    if not image_files:
-        raise FileNotFoundError(
-            f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
-        )
-
-    # Match by index using the globbed list
-    # Sort files to ensure consistent ordering
-    image_files.sort()
-
-    # Find the file at the correct index
-    if image_index <= len(image_files):
-        image_path = image_files[image_index - 1]  # 1-based index to 0-based
-    else:
-        # Wrap around if index exceeds available files
-        image_path = image_files[(image_index - 1) % len(image_files)]
-
-    # Update config
-    config['current_image_index'] = (current_image_index + 1) % len(image_list)
-    config['current_time_of_day'] = current_time_of_day
-    save_config(str(config_path_obj), config)
-
-    return str(image_path)
 
 
 # ============================================================================
@@ -1394,7 +1269,9 @@ def run_change_command(args) -> int:
             config_path_obj = DEFAULT_CONFIG_PATH
 
         config = load_config(str(config_path_obj))
-        time_of_day = config['current_time_of_day']
+
+        # Always detect current time of day
+        time_of_day = detect_time_of_day_sun(str(config_path_obj))
 
         # Monitor mode
         if args.monitor:
@@ -1414,13 +1291,16 @@ def run_change_command(args) -> int:
                     time_of_day = detect_time_of_day_sun(str(config_path_obj))
                     current_time = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
 
-                    # Check if time-of-day changed
+# Check if time-of-day changed
                     if time_of_day != last_time_of_day:
                         print(f"\n[{current_time}] Time changed: {last_time_of_day} → {time_of_day}")
                         last_time_of_day = time_of_day
 
-                        # Select new image for current time-of-day
-                        image_path = select_next_image(theme_path, str(config_path_obj))
+                        # Select new image for current time-of-day using time-based selection
+                        try:
+                            image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
+                        except Exception:
+                            image_path = select_image_for_time_hourly_cli(theme_path, str(config_path_obj))
                         print(f"  → Changing wallpaper to: {Path(image_path).name}")
 
                         if change_wallpaper(image_path):
@@ -1505,7 +1385,7 @@ def run_list_command(args) -> int:
                 print("Valid categories are: sunrise, day, sunset, night", file=sys.stderr)
                 return 1
         else:
-            time_of_day = config['current_time_of_day']
+            time_of_day = detect_time_of_day_sun(str(config_path_obj))
 
         # Get theme metadata to find image lists
         theme_json_path = theme_path_obj / "theme.json"
@@ -1563,7 +1443,7 @@ def run_status_command(args) -> int:
         wallpaper_path = get_current_wallpaper()
 
         # Get time of day
-        time_of_day = config.get('current_time_of_day', 'day')
+        time_of_day = detect_time_of_day_sun(str(config_path_obj))
 
         # Print status
         print(f"Current wallpaper:")
@@ -1575,7 +1455,7 @@ def run_status_command(args) -> int:
             print(f"  Tip: Run './wallpaper_cli.py change --theme-path <path>' to set a wallpaper")
 
         print(f"\nCurrent time-of-day: {time_of_day}")
-        print(f"Image index: {config.get('current_image_index', 0)}")
+        print(f"Image index: N/A (time-based selection now)")
 
         return 0
 

@@ -12,9 +12,7 @@ def test_load_config_valid():
         json.dump({
             "interval": 5400,
             "retry_attempts": 3,
-            "retry_delay": 5,
-            "current_image_index": 0,
-            "current_time_of_day": "day"
+            "retry_delay": 5
         }, f)
         temp_path = f.name
 
@@ -24,8 +22,6 @@ def test_load_config_valid():
         assert "interval" in config
         assert "retry_attempts" in config
         assert "retry_delay" in config
-        assert "current_image_index" in config
-        assert "current_time_of_day" in config
     finally:
         os.unlink(temp_path)
 

@@ -16,8 +16,8 @@ test_replacements = [
                 "interval": 5400,
                 "retry_attempts": 3,
                 "retry_delay": 5,
-                "current_image_index": 0,
-                "current_time_of_day": "day",
+                
+                
                 "location": \{
                     "latitude": 40\.7128,
                     "longitude": -74\.0060,
@@ -64,8 +64,8 @@ test_replacements = [
                 "interval": 5400,
                 "retry_attempts": 3,
                 "retry_delay": 5,
-                "current_image_index": 0,
-                "current_time_of_day": "day",
+                
+                
                 "location": {
                     "latitude": 40.7128,
                     "longitude": -74.0060,
