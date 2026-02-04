@@ -4,31 +4,73 @@
 - Redesign image selection to anchor images to astronomical events (dawn, sunrise, sunset, dusk)
 - Use astral library for seasonal accuracy instead of fixed time buffers
 - Map all 16 images to specific events or time periods
-- Implement elevation-based transitions for natural seasonal variation
+- Use ONLY 4 astral times as anchors (dawn, sunrise, sunset, dusk) - simplify approach
 - Maintain existing hourly fallback when astral unavailable
-- Use time_at_elevation() for inverse lookup (astral's optimized implementation)
-- Add elevation constants to config.json location section
+- Use simple time-based scheduling instead of elevation-based complexity
+- Add average durations for dawn/sunrise/sunset/dusk images (6 min for sunrise/sunset, 20 min for dawn/dusk)
+- Add evenly spaced day and night images between anchor times
 - Use TDD approach with pytest
-- Graceful fallback to old 45-minute buffer logic when elevation_angle_* missing
+- Graceful fallback to old hourly fallback when astral unavailable
 
-## Image Assignment Plan
-### Period 1: Night (Evenly distributed)
-- Images 14, 15, 16, 1 distributed from dusk to dawn
 
-### Period 2: Dawn/Sunrise (Event-anchored)
-- Image 2: Dawn (civil twilight starts, -6° elevation)
-- Image 3: Sunrise (sun at 0°)
-- Image 4: Post-sunrise (sun at +4° elevation) - **Elevation-based, configurable**
+## Image Assignment Plan (Simplified Approach)
+### Astral Times as Anchors (Phoenix, AZ - Feb 3, 2026)
+- Dawn: 06:56
+- Sunrise: 07:22
+- Sunset: 18:01
+- Dusk: 18:28
 
-### Period 3: Day (Evenly distributed)
-- Images 5, 6, 7, 8, 9 distributed from post-sunrise to pre-sunset
+### Image Durations
+- Image 2 (Dawn): 20 minutes (starts at dawn)
+- Image 3 (Sunrise): 6 minutes (starts at sunrise)
+- Image 11 (Sunset): 6 minutes (starts at sunset)
+- Image 13 (Dusk): 20 minutes (starts at dusk)
 
-### Period 4: Sunset/Dusk (Event-anchored)
-- Image 10: Pre-sunset (sun at +4° elevation) - **Elevation-based, configurable**
-- Image 11: Sunset (sun at 0°)
-- Image 12: Post-sunset (sun at -2° elevation) - **Elevation-based, configurable**
-- Image 13: Dusk (civil twilight ends, -6° elevation)
+### Period 1: Dawn/Sunrise (Event-anchored)
+- Image 2: Dawn (06:56 - 07:16) - 20 min
+- Image 3: Sunrise (07:22 - 07:28) - 6 min
+- Image 4: Post-sunrise (07:22 - 10:02) - Uses time_at_elevation(+4°)
 
+### Period 2: Day (Evenly Spaced)
+- Images 5-9 evenly spaced between Image 4 end (10:02) and Image 10 start (15:22)
+- Interval: ~1 hour 19 minutes between images
+- Image 5: 10:02 - 11:22
+- Image 6: 11:22 - 12:42
+- Image 7: 12:42 - 14:02
+- Image 8: 14:02 - 15:22
+- Image 9: 15:22 - 15:22 (NEEDS FIX - currently 0 duration)
+
+### Period 3: Sunset/Dusk (Event-anchored)
+- Image 10: Pre-sunset (15:22 - 17:22) - Uses time_at_elevation(+4°)
+- Image 11: Sunset (18:01 - 18:07) - 6 min
+- Image 12: Post-sunset (18:01 - 18:28) - Uses time_at_elevation(-2°)
+- Image 13: Dusk (18:28 - 18:48) - 20 min
+
+### Period 4: Night (Evenly Spaced)
+- Images 14-16, 1 evenly spaced between dusk (18:28) and dawn (06:56 next day)
+- Interval: ~4 hours 9 minutes between images
+- Image 14: 18:28 - 22:37
+- Image 15: 22:37 - 02:47
+- Image 16: 02:47 - 06:56
+- Image 1: 06:56 - 06:56 (NEEDS FIX - currently 24:00 duration, should be before dawn)
+
+### Updated Schedule After User Decisions
+- **Image 1**: Before dawn (last night image, ends at 06:56)
+- **Image 2**: Dawn (06:56 - 07:16, 20 min)
+- **Image 3**: Sunrise (07:22 - 07:28, 6 min)
+- **Image 4**: Post-sunrise (07:22 - 10:02) - Uses time_at_elevation(+4°)
+- **Image 5-8**: Evenly spaced between Image 4 end (10:02) and Image 9 start
+- **Image 9**: 30 minutes duration (late day before pre-sunset)
+- **Image 10**: Pre-sunset (Image 9 end - 15:22) - Uses time_at_elevation(+4°)
+- **Image 11**: Sunset (18:01 - 18:07, 6 min)
+- **Image 12**: Post-sunset (18:01 - 18:28) - Uses time_at_elevation(-2°)
+- **Image 13**: Dusk (18:28 - 18:48, 20 min)
+
+### Issues to Resolve
+1. **Image 1 duration**: Currently shows 24:00 (overnight), should show last night image ending at dawn (06:56) with proper duration
+2. **Image 9 duration**: Currently shows 0:00, should be 30 minutes
+3. **Image 10 timing**: Should start after Image 9 ends (not fixed at 15:22)
+4. **Calculate proper intervals**: Need to recalculate evenly spaced intervals for all images
 ## Configuration Constants
 **Location**: `~/.config/wallpaper-changer/config.json` → location section
 
@@ -57,18 +99,20 @@
 **Default Values**: +4° for image 4 (post-sunrise), +4° for image 10 (pre-sunset), -2° for image 12 (post-sunset)
 
 ### User Decisions (Confirmed)
-1. **Constants Location**: Config file (add elevation_angle_* fields to location section)
-2. **Inverse Lookup Algorithm**: Use time_at_elevation() directly (not custom binary search)
-3. **Image 4/12 Transitions**: Elevation-based transitions (configurable via config file)
-4. **Fallback Behavior**: Graceful fallback to old 45-minute buffer logic when elevation_angle_* missing
-5. **Elevation Values**: Use README defaults (4° for images 4/10, -2° for image 12)
-6. **Test Strategy**: YES (TDD with pytest)
+ 1. **Approach**: Use ONLY 4 astral times (dawn, sunrise, sunset, dusk) as anchors - simplify approach
+ 2. **Day Images**: Evenly spaced between Image 4 end and Image 10 start
+ 3. **Night Images**: Evenly spaced between dusk and dawn
+ 4. **Image 1**: Early morning sunlight (dawn period)
+ 5. **Image 9**: Late day before pre-sunset
+ 6. **Average Durations**: 6 min for sunrise/sunset, 20 min for dawn/dusk
+ 7. **Test Strategy**: YES (TDD with pytest)
 
 ### Implementation Approach
-- Use astral.sun.elevation() for solar elevation calculations
-- Use time_at_elevation() directly (astral's optimized implementation)
-- Add elevation_angle_* fields to config.json location section
-- Store current time boundaries for 16 image transition times
+- Use ONLY 4 astral times (dawn, sunrise, sunset, dusk) as anchors
+- Use simple time-based scheduling instead of elevation-based complexity
+- Calculate average durations for dawn/sunrise/sunset/dusk (6 min for sunrise/sunset, 20 min for dawn/dusk)
+- Evenly space day images between dawn and dusk (Image 4 end to Image 10 start)
+- Evenly space night images between dusk and dawn
 - Keep existing hourly fallback when astral unavailable
 - All tests will be written first (RED), then implementation (GREEN), then refactoring (REFACTOR)
 
