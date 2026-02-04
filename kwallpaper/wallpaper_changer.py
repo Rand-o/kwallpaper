@@ -56,13 +56,13 @@ DURATION_IMAGE_9_MINUTES = 30
 
 
 def calculate_image_spacing(start_time: datetime, end_time: datetime,
-                            num_images: int, current_time: datetime) -> int:
+                            num_images: int, now: datetime) -> int:
     """Calculate which image to show based on even spacing across a time period."""
     if start_time >= end_time:
         return 1
     
     period_duration = (end_time - start_time).total_seconds()
-    time_in_period = (current_time - start_time).total_seconds()
+    time_in_period = (now - start_time).total_seconds()
     
     if time_in_period <= 0:
         return 1
@@ -279,7 +279,7 @@ def get_current_wallpaper() -> Optional[str]:
 # TIME-OF-DAY DETECTION
 # ============================================================================
 
-def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5, lon: float = -119.8, elevation: float = 0, mock_sun=None, current_time: Optional[datetime] = None) -> str:
+def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5, lon: float = -119.8, elevation: float = 0, mock_sun=None, now: Optional[datetime] = None) -> str:
     """Detect current time-of-day category using Astral library for accurate sunrise/sunset times.
 
     Args:
@@ -288,7 +288,7 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         lon: Longitude for sunrise/sunset calculation (default: -119.8)
         elevation: Elevation in meters (default: 0)
         mock_sun: Optional mock sun object for testing
-        current_time: Optional specific datetime to test (default: use datetime.now())
+        now: Optional specific datetime to test (default: use datetime.now())
 
     Returns:
         Time-of-day category: "night", "sunrise", "day", or "sunset"
@@ -353,7 +353,7 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         else:
             # Use real Astral library
             location = LocationInfo("Default", "California", timezone, lat, lon)
-            s = sun(location.observer, date=datetime.now().date())
+            s = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
 
         # Fix: When sunset/dusk are earlier than sunrise/dawn in UTC, they're actually next day
         if s['sunset'] and s['sunrise'] and s['sunset'] < s['sunrise']:
@@ -361,14 +361,13 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         if s['dusk'] and s['dawn'] and s['dusk'] < s['dawn']:
             s['dusk'] = s['dusk'] + timedelta(days=1)
 
-        # Get current time in target timezone (use provided current_time if available)
-        if current_time is not None:
-            # Keep in UTC for comparison with mock sun times (which are in UTC)
-            now = current_time
+        # Get current time in target timezone
+        if now is not None:
+            now = now
         else:
             now = datetime.now(ZoneInfo(timezone))
 
-        # Compare timestamps (keep everything in UTC for consistency)
+        # Astral returns times in the specified timezone, so we compare directly
         from typing import cast
         dawn_val = cast(datetime | None, s['dawn'])
         sunrise_val = cast(datetime | None, s['sunrise'])
@@ -452,6 +451,15 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     
     time_of_day = detect_time_of_day_sun(config_path)
 
+    # Get current time (timezone-aware)
+    try:
+        config = load_config(config_path)
+        timezone = config.get('location', {}).get('timezone', 'America/Los_Angeles')
+        now = datetime.now(ZoneInfo(timezone))
+    except:
+        # Fallback to UTC if timezone not available
+        now = datetime.now(ZoneInfo('UTC'))
+
     # Get image list for current time-of-day
     image_list = theme_data.get(f"{time_of_day}ImageList", [])
 
@@ -469,8 +477,97 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         except ValueError:
             raise ValueError("No images available in any time-of-day category")
 
-    # Get image filename from index
-    image_index = image_list[0]
+    # Calculate image index based on current time within the time-of-day period
+    from datetime import time as time_class
+    from typing import cast
+    
+    # Get sun times for position calculation
+    if ASTRAL_AVAILABLE:
+        try:
+            from astral import LocationInfo
+            from astral.sun import sun
+            
+            # Get location from config
+            timezone = "America/Los_Angeles"
+            try:
+                config = load_config(config_path)
+                if 'location' in config:
+                    timezone = config['location'].get('timezone', timezone)
+            except (FileNotFoundError, ValueError):
+                pass
+            
+            location = LocationInfo("Default", "California", timezone, 39.5, -119.8)
+            s_data = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
+            
+            dawn_val = cast(datetime | None, s_data['dawn'])
+            sunrise_val = cast(datetime | None, s_data['sunrise'])
+            sunset_val = cast(datetime | None, s_data['sunset'])
+            dusk_val = cast(datetime | None, s_data['dusk'])
+            
+            use_sun_times = ASTRAL_AVAILABLE and all([
+                dawn_val is not None, sunrise_val is not None,
+                sunset_val is not None, dusk_val is not None
+            ])
+        except Exception:
+            use_sun_times = False
+    else:
+        use_sun_times = False
+    
+    # Calculate image index based on time period
+    if time_of_day == "night":
+        if use_sun_times and dusk_val:
+            period_start = dusk_val
+        else:
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+        if use_sun_times and dawn_val:
+            period_end = dawn_val
+        else:
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
+        period_duration = (period_end - period_start).total_seconds()
+        position = (now - period_start).total_seconds() / period_duration
+        image_index = int((position - 1e-9) * len(image_list)) + 14
+    
+    elif time_of_day == "sunrise":
+        if use_sun_times and dawn_val:
+            period_start = dawn_val
+        else:
+            period_start = datetime.combine(now.date(), time_class(5, 15))
+        if use_sun_times and sunrise_val:
+            period_end = sunrise_val
+        else:
+            period_end = datetime.combine(now.date(), time_class(6, 0))
+        period_duration = (period_end - period_start).total_seconds()
+        position = (now - period_start).total_seconds() / period_duration
+        image_index = int((position - 1e-9) * len(image_list)) + 2
+    
+    elif time_of_day == "day":
+        if use_sun_times and sunrise_val:
+            period_start = sunrise_val
+        else:
+            period_start = datetime.combine(now.date(), time_class(6, 0))
+        if use_sun_times and sunset_val:
+            period_end = sunset_val
+        else:
+            period_end = datetime.combine(now.date(), time_class(18, 0))
+        period_duration = (period_end - period_start).total_seconds()
+        position = (now - period_start).total_seconds() / period_duration
+        image_index = int((position - 1e-9) * len(image_list)) + 5
+    
+    elif time_of_day == "sunset":
+        if use_sun_times and sunset_val:
+            period_start = sunset_val
+        else:
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+        if use_sun_times and dusk_val:
+            period_end = dusk_val
+        else:
+            period_end = datetime.combine(now.date(), time_class(18, 30))
+        period_duration = (period_end - period_start).total_seconds()
+        position = (now - period_start).total_seconds() / period_duration
+        image_index = int((position - 1e-9) * len(image_list)) + 10
+    
+    else:
+        image_index = image_list[0]
 
     # Find image file
     # Pattern: imageFilename contains index, e.g., "24hr-Tahoe-2026_*.jpeg"
@@ -591,35 +688,35 @@ def select_image_for_time_hourly_cli(theme_path: str, config_path: str) -> str:
     # Sort hourly_table by time to ensure correct ordering
     sorted_table = sorted(hourly_table, key=lambda x: x[0])
 
-    current_time_of_day = None
+    now_of_day = None
     image_index = None
 
-    # Find the last time slot where slot_time <= current_time
+    # Find the last time slot where slot_time <= now
     for slot_time, slot_index, slot_category in sorted_table:
         if now.time() >= slot_time:
-            current_time_of_day = slot_category
+            now_of_day = slot_category
             image_index = slot_index
         else:
-            # Once we find a time that's greater than current_time, we've gone too far
+            # Once we find a time that's greater than now, we've gone too far
             # Break and use the previous slot
             break
 
-    # If we didn't find any slot (current_time is before all slots), use the last slot
-    if current_time_of_day is None or image_index is None:
-        current_time_of_day = hourly_table[-1][2]
+    # If we didn't find any slot (now is before all slots), use the last slot
+    if now_of_day is None or image_index is None:
+        now_of_day = hourly_table[-1][2]
         image_index = hourly_table[-1][1]
 
     # Get image list for current time-of-day
-    image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
+    image_list = theme_data.get(f"{now_of_day}ImageList", [])
 
     # If current time-of-day has no images, switch to next category
     while not image_list:
         time_categories = ['sunrise', 'day', 'sunset', 'night']
         try:
-            current_idx = time_categories.index(current_time_of_day)
+            current_idx = time_categories.index(now_of_day)
             if current_idx < len(time_categories) - 1:
-                current_time_of_day = time_categories[current_idx + 1]
-                image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
+                now_of_day = time_categories[current_idx + 1]
+                image_list = theme_data.get(f"{now_of_day}ImageList", [])
             else:
                 # All categories empty, raise error
                 raise ValueError("No images available in any time-of-day category")
@@ -629,7 +726,7 @@ def select_image_for_time_hourly_cli(theme_path: str, config_path: str) -> str:
     # Check if image index is valid
     if image_index > len(image_list):
         raise ValueError(
-            f"Image index {image_index} exceeds available images in {current_time_of_day} category "
+            f"Image index {image_index} exceeds available images in {now_of_day} category "
             f"(only {len(image_list)} images available)"
         )
 
@@ -683,7 +780,7 @@ def select_image_for_time_hourly_cli(theme_path: str, config_path: str) -> str:
     return str(image_path)
 
 
-def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mock_sun=None) -> int:
+def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=None) -> int:
     """Select image index based on current time using time-based detection.
 
     This is a wrapper function for testing purposes. It uses the same logic as
@@ -691,7 +788,7 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
 
     Args:
         theme_data: Theme data dictionary containing image lists and filename patterns
-        current_time: Current datetime for time-based selection
+        now: Current datetime for time-based selection
         mock_sun: Optional mock sun object for testing
 
     Returns:
@@ -749,13 +846,13 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
                 from astral import LocationInfo
                 from astral.sun import sun
                 location = LocationInfo("Test", "Test", "UTC", 40.7128, -74.0060)
-                s = sun(location.observer, date=current_time.date())
+                s = sun(location.observer, date=now.date())
 
-            # Convert current_time to timezone-aware datetime in UTC
-            if current_time.tzinfo is None:
-                now = current_time.replace(tzinfo=timezone.utc)
+            # Convert now to timezone-aware datetime in UTC
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=timezone.utc)
             else:
-                now = current_time.astimezone(timezone.utc)
+                now = now.astimezone(timezone.utc)
 
             # DEBUG
             import sys
@@ -780,10 +877,10 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
             print(f"DEBUG select_image_for_time: time_of_day={time_of_day}", file=sys.stderr)
         except Exception:
             # Fall back to simple detection if Astral fails
-            time_of_day = detect_time_of_day_hour(current_time.hour)
+            time_of_day = detect_time_of_day_hour(now.hour)
     else:
         # No Astral available - use simple hour-based detection
-        time_of_day = detect_time_of_day_hour(current_time.hour)
+        time_of_day = detect_time_of_day_hour(now.hour)
 
     # Get sun times for period calculations (s may be None if Astral not available)
     dawn_val = s.get('dawn') if s else None
@@ -808,19 +905,19 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         if use_sun_times and dusk_val:
             period_start = dusk_val
         else:
-            period_start = datetime.combine(current_time.date(), time_class(18, 0))
+            period_start = datetime.combine(now.date(), time_class(18, 0))
             if period_start.tzinfo is None:
                 period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and dawn_val:
             period_end = dawn_val
         else:
-            period_end = datetime.combine(current_time.date() + timedelta(days=1), time_class(6, 0))
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
             if period_end.tzinfo is None:
                 period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
-        position = (current_time - period_start).total_seconds() / period_duration
+        position = (now - period_start).total_seconds() / period_duration
 
         # Calculate image index: evenly space images across the period
         # First image (14) at position 0, second image (15) at position 1/4, etc.
@@ -828,7 +925,7 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         image_index = int((position - 1e-9) * len(image_list)) + 14
 
         # Clamp to valid range
-        image_index = max(1, min(image_index, len(image_list)))
+        image_index = max(1, image_index)
 
     elif time_of_day == "sunrise":
         # Sunrise: dawn to sunrise (inclusive at sunrise)
@@ -836,21 +933,21 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         if use_sun_times and dawn_val:
             period_start = dawn_val
         else:
-            period_start = datetime.combine(current_time.date(), time_class(5, 15))
+            period_start = datetime.combine(now.date(), time_class(5, 15))
             if period_start.tzinfo is None:
                 period_start = period_start.replace(tzinfo=timezone.utc)
 
         if use_sun_times and sunrise_val:
             period_end = sunrise_val
         else:
-            period_end = datetime.combine(current_time.date(), time_class(6, 0))
+            period_end = datetime.combine(now.date(), time_class(6, 0))
             if period_end.tzinfo is None:
                 period_end = period_end.replace(tzinfo=timezone.utc)
 
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
-        position = (current_time - period_start).total_seconds() / period_duration
+        position = (now - period_start).total_seconds() / period_duration
 
         # Calculate image index: evenly space images across the period
         # First image (2) at position 0, second image (3) at position 1/3, third image (4) at position 2/3
@@ -858,25 +955,25 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         image_index = int((position - 1e-9) * len(image_list)) + 2
 
         # Clamp to valid range
-        image_index = max(1, min(image_index, len(image_list)))
+        image_index = max(1, image_index)
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
             period_start = sunrise_val
         else:
-            period_start = datetime.combine(current_time.date(), time_class(6, 0))
+            period_start = datetime.combine(now.date(), time_class(6, 0))
             if period_start.tzinfo is None:
                 period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and sunset_val:
             period_end = sunset_val
         else:
-            period_end = datetime.combine(current_time.date(), time_class(18, 0))
+            period_end = datetime.combine(now.date(), time_class(18, 0))
             if period_end.tzinfo is None:
                 period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
-        position = (current_time - period_start).total_seconds() / period_duration
+        position = (now - period_start).total_seconds() / period_duration
 
         # Calculate image index: evenly space images across the period
         # First image (5) at position 0, second image (6) at position 1/5, etc.
@@ -884,7 +981,7 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         image_index = int((position - 1e-9) * len(image_list)) + 5
 
         # Clamp to valid range
-        image_index = max(1, min(image_index, len(image_list)))
+        image_index = max(1, image_index)
 
     elif time_of_day == "sunset":
         # Sunset: sunset to dusk
@@ -892,19 +989,19 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         if use_sun_times and sunset_val:
             period_start = sunset_val
         else:
-            period_start = datetime.combine(current_time.date(), time_class(18, 0))
+            period_start = datetime.combine(now.date(), time_class(18, 0))
             if period_start.tzinfo is None:
                 period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and dusk_val:
             period_end = dusk_val
         else:
-            period_end = datetime.combine(current_time.date(), time_class(18, 30))
+            period_end = datetime.combine(now.date(), time_class(18, 30))
             if period_end.tzinfo is None:
                 period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
-        position = (current_time - period_start).total_seconds() / period_duration
+        position = (now - period_start).total_seconds() / period_duration
 
         # Calculate image index: evenly space images across the period
         # First image (10) at position 0, second image (11) at position 1/4, etc.
@@ -912,17 +1009,16 @@ def select_image_for_time(theme_data: Dict[str, Any], current_time: datetime, mo
         image_index = int((position - 1e-9) * len(image_list)) + 10
 
         # Clamp to valid range
-        image_index = max(1, min(image_index, len(image_list)))
+        image_index = max(1, image_index)
 
     else:
         # Should not happen
         raise ValueError(f"Invalid time-of-day category: {time_of_day}")
 
-    # Validate index
-    if image_index > len(image_list):
+    # Validate image index is in the image list
+    if image_index not in theme_data.get(f"{time_of_day}ImageList", []):
         raise ValueError(
-            f"Image index {image_index} exceeds available images in {time_of_day} category "
-            f"(only {len(image_list)} images available)"
+            f"Image index {image_index} not found in {time_of_day} category"
         )
 
     return image_index
@@ -949,7 +1045,7 @@ def detect_time_of_day_hour(hour: int) -> str:
         return "night"
 
 
-def select_image_for_time_hourly(theme_data: Dict[str, Any], current_time: datetime) -> int:
+def select_image_for_time_hourly(theme_data: Dict[str, Any], now: datetime) -> int:
     """Select image index based on current time using hourly fallback table.
 
     This is a wrapper function for testing purposes. It uses the same logic as
@@ -957,7 +1053,7 @@ def select_image_for_time_hourly(theme_data: Dict[str, Any], current_time: datet
 
     Args:
         theme_data: Theme data dictionary containing image lists and filename patterns
-        current_time: Current datetime for time-based selection
+        now: Current datetime for time-based selection
 
     Returns:
         Image index to select
@@ -966,7 +1062,7 @@ def select_image_for_time_hourly(theme_data: Dict[str, Any], current_time: datet
         ValueError: If no images available or index exceeds available images
     """
     # Get current time
-    now = current_time
+    now = now
 
     # Hourly fallback table
     hourly_table = [
@@ -992,35 +1088,35 @@ def select_image_for_time_hourly(theme_data: Dict[str, Any], current_time: datet
     # Sort hourly_table by time to ensure correct ordering
     sorted_table = sorted(hourly_table, key=lambda x: x[0])
 
-    current_time_of_day = None
+    now_of_day = None
     image_index = None
 
-    # Find the last time slot where slot_time <= current_time
+    # Find the last time slot where slot_time <= now
     for slot_time, slot_index, slot_category in sorted_table:
         if now.time() >= slot_time:
-            current_time_of_day = slot_category
+            now_of_day = slot_category
             image_index = slot_index
         else:
-            # Once we find a time that's greater than current_time, we've gone too far
+            # Once we find a time that's greater than now, we've gone too far
             # Break and use the previous slot
             break
 
-    # If we didn't find any slot (current_time is before all slots), use the last slot
-    if current_time_of_day is None or image_index is None:
-        current_time_of_day = hourly_table[-1][2]
+    # If we didn't find any slot (now is before all slots), use the last slot
+    if now_of_day is None or image_index is None:
+        now_of_day = hourly_table[-1][2]
         image_index = hourly_table[-1][1]
 
     # Get image list for current time-of-day
-    image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
+    image_list = theme_data.get(f"{now_of_day}ImageList", [])
 
     # If current time-of-day has no images, switch to next category
     while not image_list:
         time_categories = ['sunrise', 'day', 'sunset', 'night']
         try:
-            current_idx = time_categories.index(current_time_of_day)
+            current_idx = time_categories.index(now_of_day)
             if current_idx < len(time_categories) - 1:
-                current_time_of_day = time_categories[current_idx + 1]
-                image_list = theme_data.get(f"{current_time_of_day}ImageList", [])
+                now_of_day = time_categories[current_idx + 1]
+                image_list = theme_data.get(f"{now_of_day}ImageList", [])
             else:
                 # All categories empty, raise error
                 raise ValueError("No images available in any time-of-day category")
@@ -1030,7 +1126,7 @@ def select_image_for_time_hourly(theme_data: Dict[str, Any], current_time: datet
     # Check if image index is valid
     if image_index > len(image_list):
         raise ValueError(
-            f"Image index {image_index} exceeds available images in {current_time_of_day} category "
+            f"Image index {image_index} exceeds available images in {now_of_day} category "
             f"(only {len(image_list)} images available)"
         )
 
@@ -1289,11 +1385,11 @@ def run_change_command(args) -> int:
                 try:
                     # Get current time of day
                     time_of_day = detect_time_of_day_sun(str(config_path_obj))
-                    current_time = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
+                    now = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
 
 # Check if time-of-day changed
                     if time_of_day != last_time_of_day:
-                        print(f"\n[{current_time}] Time changed: {last_time_of_day} → {time_of_day}")
+                        print(f"\n[{now}] Time changed: {last_time_of_day} → {time_of_day}")
                         last_time_of_day = time_of_day
 
                         # Select new image for current time-of-day using time-based selection
@@ -1313,9 +1409,9 @@ def run_change_command(args) -> int:
                     else:
                         # Just log current status
                         if last_image_path:
-                            print(f"\r[{current_time}] {time_of_day} - {Path(last_image_path).name}", end="", flush=True)
+                            print(f"\r[{now}] {time_of_day} - {Path(last_image_path).name}", end="", flush=True)
                         else:
-                            print(f"\r[{current_time}] {time_of_day} - loading...", end="", flush=True)
+                            print(f"\r[{now}] {time_of_day} - loading...", end="", flush=True)
 
                     # Wait for next interval (check if time changed)
                     time.sleep(config['interval'])
