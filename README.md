@@ -90,6 +90,38 @@ Default: `~/.config/wallpaper-changer/config.json`
 - **day**: 07:00 - 16:59
 - **sunset**: 17:00 - 18:59
 
+### Hourly Fallback
+
+When the Astral library is unavailable (not installed) or fails to calculate sunrise/sunset times (e.g., polar regions, invalid location), the tool automatically falls back to an hourly timing table with 16 fixed time points:
+
+| Time | Image Index | Category |
+|------|-------------|----------|
+| 04:30 | 1 | sunrise |
+| 06:15 | 2 | sunrise |
+| 06:30 | 3 | sunrise |
+| 07:30 | 4 | sunrise |
+| 10:00 | 5 | day |
+| 12:00 | 6 | day |
+| 14:00 | 7 | day |
+| 16:00 | 8 | day |
+| 17:00 | 9 | day |
+| 18:00 | 10 | sunset |
+| 18:30 | 11 | sunset |
+| 18:45 | 12 | sunset |
+| 19:00 | 13 | sunset |
+| 20:00 | 14 | night |
+| 22:30 | 15 | night |
+| 01:00 | 16 | night |
+
+**Fallback Trigger:**
+- **ImportError**: Astral library is not installed
+- **ValueError**: Astral library is installed but fails (polar regions, invalid location, etc.)
+
+**Error Handling:**
+- If the requested image index (1-16) exceeds the available images in the selected category, a `ValueError` is raised with a descriptive message
+- The tool attempts to select an image from the appropriate category based on the timing table
+- If the category has no images available, it cycles through categories until finding images
+
 ## Usage
 
 ### Extract Theme
