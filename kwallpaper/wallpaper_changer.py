@@ -1335,10 +1335,24 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
             use_sun_times = False
 
     if time_of_day == "night":
-        period_start = datetime.combine(now.date(), time_class(18, 0))
-        period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
-        period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
-        period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
+        # DEBUG
+        import sys
+        print(f"DEBUG select_image_for_specific_time night: now={now}, use_sun_times={use_sun_times}", file=sys.stderr)
+        print(f"DEBUG select_image_for_specific_time night: dawn_val={dawn_val}, dusk_val={dusk_val}", file=sys.stderr)
+        if use_sun_times and dusk_val and dawn_val:
+            period_start = dusk_val
+        else:
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+            period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
+        if use_sun_times and dawn_val:
+            # Dawn is on the next day for night period
+            period_end = dawn_val.replace(day=dawn_val.day)  # Keep dawn date (should be next day)
+            # If dawn is on same day as dusk, add one day
+            if period_end.date() <= period_start.date():
+                period_end = period_end + timedelta(days=1)
+        else:
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
+            period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
         period_duration = (period_end - period_start).total_seconds()
         # Handle wrap-around: if now is before period_start (e.g., 00:00 before 18:00),
         # add one day to now for position calculation
