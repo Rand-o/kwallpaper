@@ -1350,6 +1350,11 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
             # If dawn is on same day as dusk, add one day
             if period_end.date() <= period_start.date():
                 period_end = period_end + timedelta(days=1)
+            # Extend period by ~4 hours so image 16 covers until dawn
+            # With 4 images: image 1 at 3/4 mark
+            # Want image 1 at dawn (06:54), period_duration = 744 / 0.75 = 992min
+            # Extend by 992 - 744 = 248min = 4h8min
+            period_end = period_end + timedelta(hours=4, minutes=8)
         else:
             period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
             period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
