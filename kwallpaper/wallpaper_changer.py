@@ -558,7 +558,8 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-            period_start = sunrise_val
+            # Match detect_time_of_day_sun: day starts 45 min after sunrise
+            period_start = sunrise_val + timedelta(minutes=45)
         else:
             period_start = datetime.combine(now.date(), time_class(6, 0))
         if use_sun_times and sunset_val:
@@ -979,7 +980,8 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-            period_start = sunrise_val
+            # Match detect_time_of_day_sun: day starts 45 min after sunrise
+            period_start = sunrise_val + timedelta(minutes=45)
         else:
             period_start = datetime.combine(now.date(), time_class(6, 0))
             if period_start.tzinfo is None:
@@ -1357,7 +1359,7 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
             period_start = datetime.combine(now.date(), time_class(5, 15))
             period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
         if use_sun_times and sunrise_val:
-            period_end = sunrise_val
+            period_end = sunrise_val + timedelta(minutes=45)
         else:
             period_end = datetime.combine(now.date(), time_class(6, 0))
             period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
@@ -1370,12 +1372,14 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-            period_start = sunrise_val
+            # Match detect_time_of_day_sun: day starts 45 min after sunrise
+            period_start = sunrise_val + timedelta(minutes=45)
         else:
             period_start = datetime.combine(now.date(), time_class(6, 0))
             period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
-        if use_sun_times and sunset_val:
-            period_end = sunset_val
+        if use_sun_times and dusk_val:
+            # Match detect_time_of_day_sun: day ends 45 min before dusk
+            period_end = dusk_val - timedelta(minutes=45)
         else:
             period_end = datetime.combine(now.date(), time_class(18, 0))
             period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
@@ -1384,8 +1388,9 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
         image_index = int((position - 1e-9) * len(image_list)) + 5
 
     elif time_of_day == "sunset":
-        if use_sun_times and sunset_val:
-            period_start = sunset_val
+        if use_sun_times and dusk_val:
+            # Match detect_time_of_day_sun: sunset starts 45 min before dusk
+            period_start = dusk_val - timedelta(minutes=45)
         else:
             period_start = datetime.combine(now.date(), time_class(18, 0))
             period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
