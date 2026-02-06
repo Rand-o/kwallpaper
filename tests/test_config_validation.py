@@ -46,14 +46,3 @@ def test_save_config():
         assert load_config(temp_path) == config
     finally:
         os.unlink(temp_path)
-
-
-def test_save_config():
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        temp_path = f.name
-    try:
-        config = {"interval": 100, "retry_attempts": 2, "retry_delay": 10}
-        save_config(temp_path, config)
-        assert load_config(temp_path) == config
-    finally:
-        os.unlink(temp_path)

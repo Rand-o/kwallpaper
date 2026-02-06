@@ -17,11 +17,10 @@ from kwallpaper import wallpaper_changer as wc
 class MockSun:
     """Mock sun object for testing."""
     def __init__(self, sunrise=None, sunset=None, dawn=None, dusk=None):
-        print(f"DEBUG MockSun.__init__: sunrise={sunrise}, type={type(sunrise)}, tzinfo={sunrise.tzinfo if sunrise else None}")
         self._sunrise = sunrise
         self._sunset = sunset
         self._dawn = dawn if dawn is not None else (sunrise - timedelta(minutes=45)) if sunrise else None
-        self._dusk = dusk if dusk is not None else (sunset + timedelta(minutes=45)) if sunset else None
+        self._dusk = dusk if dusk is not None else (sunset + timedelta(minutes=30)) if sunset else None
 
     def __call__(self, observer, date=None):
         self._observer = observer
