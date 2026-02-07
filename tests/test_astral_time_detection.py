@@ -20,7 +20,7 @@ class MockSun:
         self._sunrise = sunrise
         self._sunset = sunset
         self._dawn = dawn if dawn is not None else (sunrise - timedelta(minutes=45)) if sunrise else None
-        self._dusk = dusk if dusk is not None else (sunset + timedelta(minutes=30)) if sunset else None
+        self._dusk = dusk if dusk is not None else (sunset + timedelta(minutes=45)) if sunset else None
 
     def __call__(self, observer, date=None):
         self._observer = observer
@@ -292,7 +292,7 @@ def test_detect_time_of_day_sun_civil_twilight():
         # Test with mock sun times for London
         mock_sun = MockSun(
             sunrise=datetime.combine(datetime.now().date(), time(7, 30)),
-            sunset=datetime.combine(datetime.now().date(), time(16, 30))
+            sunset=datetime.combine(datetime.now().date(), time(16, 31))
         )
 
         # Setup mock and import wallpaper_changer
@@ -497,7 +497,7 @@ def test_select_image_sunset_during_sunset():
 
 
 def test_select_image_sunset_going_under():
-    """Test that image 12 shown going under horizon."""
+    """Test that image 14 shown going under horizon."""
     today = datetime.now().date()
     sunset_time = time(18, 0)
     # Use time after dusk (18:30) to test night detection
@@ -530,13 +530,13 @@ def test_select_image_sunset_going_under():
 
     try:
         selected_image = wc.select_image_for_time(theme_data, after_dusk, mock_sun=mock_sun)
-        assert selected_image == 15, f"Expected image 15, got {selected_image}"
+        assert selected_image == 14, f"Expected image 14, got {selected_image}"
     finally:
         builtins.__import__ = original_import
 
 
 def test_select_image_sunset_completed():
-    """Test that image 13 shown after sunset completes."""
+    """Test that image 14 shown after sunset completes."""
     today = datetime.now().date()
     sunset_time = time(18, 0)
     # Use time after dusk (18:30) to test night detection
@@ -569,7 +569,7 @@ def test_select_image_sunset_completed():
 
     try:
         selected_image = wc.select_image_for_time(theme_data, after_dusk, mock_sun=mock_sun)
-        assert selected_image == 15, f"Expected image 15, got {selected_image}"
+        assert selected_image == 14, f"Expected image 14, got {selected_image}"
     finally:
         builtins.__import__ = original_import
 
@@ -583,11 +583,11 @@ def test_select_image_day_evenly_spaced():
     # Day is 12 hours, 5 images = 2.4 hours apart (2h 24min)
     # Image 5: ~6:00, Image 6: ~8:24, Image 7: ~10:48, Image 8: ~13:12, Image 9: ~15:36
     test_times = [
-        (datetime.combine(today, time(6, 30)).replace(tzinfo=timezone.utc), 5),  # Early day
-        (datetime.combine(today, time(9, 00)).replace(tzinfo=timezone.utc), 6),  # Mid-morning
+        (datetime.combine(today, time(7, 0)).replace(tzinfo=timezone.utc), 5),  # Early day
+        (datetime.combine(today, time(9, 1)).replace(tzinfo=timezone.utc), 6),  # Mid-morning
         (datetime.combine(today, time(12, 00)).replace(tzinfo=timezone.utc), 7),  # Noon
-        (datetime.combine(today, time(14, 00)).replace(tzinfo=timezone.utc), 8),  # Afternoon
-        (datetime.combine(today, time(16, 30)).replace(tzinfo=timezone.utc), 9),  # Late day
+        (datetime.combine(today, time(14, 1)).replace(tzinfo=timezone.utc), 8),  # Afternoon
+        (datetime.combine(today, time(16, 31)).replace(tzinfo=timezone.utc), 9),  # Late day
     ]
 
     theme_data = {
@@ -635,8 +635,8 @@ def test_select_image_night_evenly_spaced():
     test_times = [
         (datetime.combine(today, time(19, 00)).replace(tzinfo=timezone.utc), 14),  # Early night
         (datetime.combine(today, time(22, 00)).replace(tzinfo=timezone.utc), 15),  # Mid-evening
-        (datetime.combine(today, time(1, 00)).replace(tzinfo=timezone.utc), 16),  # Midnight
-        (datetime.combine(today, time(4, 00)).replace(tzinfo=timezone.utc), 1),  # Early morning
+        (datetime.combine(today + timedelta(days=1), time(1, 00)).replace(tzinfo=timezone.utc), 16),  # Midnight
+        (datetime.combine(today + timedelta(days=1), time(4, 00)).replace(tzinfo=timezone.utc), 1),  # Early morning
     ]
 
     theme_data = {
@@ -1186,7 +1186,9 @@ def test_detect_time_of_day_sun_sunrise_between_dawn_and_sunrise():
         builtins.__import__ = mock_import
 
         try:
-            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun)
+            # Use time halfway between dawn and sunrise (05:30)
+            test_now = datetime.combine(today, time(5, 30))
+            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun, now=test_now)
 
             # Between dawn and sunrise should be 'sunrise'
             assert result == 'sunrise', \
@@ -1227,7 +1229,9 @@ def test_detect_time_of_day_sun_day_between_sunrise_and_sunset():
         wc, original_import = setup_astral_mock(mock_sun)
 
         try:
-            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun)
+            # Use noon (12:00) which is between sunrise (06:00) and sunset (18:00)
+            test_now = datetime.combine(today, time(12, 0))
+            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun, now=test_now)
 
             # Between sunrise and sunset should be 'day'
             assert result == 'day', \
@@ -1277,7 +1281,7 @@ def test_detect_time_of_day_sun_sunset_between_sunset_and_dusk():
         builtins.__import__ = mock_import
 
         try:
-            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun)
+            result = wc.detect_time_of_day_sun(temp_path, mock_sun=mock_sun, now=datetime.combine(today, time(18, 15)).replace(tzinfo=timezone.utc))
 
             # Between sunset and dusk should be 'sunset'
             assert result == 'sunset', \

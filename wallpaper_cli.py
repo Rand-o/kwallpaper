@@ -21,7 +21,7 @@ if kwallpaper_dir not in sys.path:
     sys.path.insert(0, kwallpaper_dir)
 
 # Import main function from consolidated module
-from wallpaper_changer import main
+from kwallpaper.wallpaper_changer import main
 
 
 if __name__ == '__main__':

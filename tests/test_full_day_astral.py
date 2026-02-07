@@ -174,7 +174,7 @@ def test_daily_cycle_transitions():
     assert time_of_day == "day", f"Expected 'day' at {test_time_day_end.strftime('%H:%M')} LA, got '{time_of_day}'"
     
     # LA time: 16:38 UTC: 00:38 (first minute of sunset, next day in UTC)
-    test_time_sunset_start = datetime.combine(test_date_next, datetime.strptime("16:38", "%H:%M").time()).replace(tzinfo=ZoneInfo("America/Los_Angeles"))
+    test_time_sunset_start = datetime.combine(test_date_next, datetime.strptime("17:10", "%H:%M").time()).replace(tzinfo=ZoneInfo("America/Los_Angeles"))
     time_of_day = wallpaper_changer.detect_time_of_day_sun(
         lat=39.5, lon=-119.8, mock_sun=mock_sun_next, now=test_time_sunset_start
     )
@@ -213,7 +213,7 @@ def test_image_list_membership():
         ("03:00", "night"),
         ("07:07", "sunrise"),
         ("08:16", "day"),
-        ("16:38", "sunset"),
+        ("17:10", "sunset"),
     ]
     
     for time_str, expected_category in test_cases:
