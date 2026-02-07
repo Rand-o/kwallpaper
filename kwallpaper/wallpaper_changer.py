@@ -512,7 +512,19 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
             except (FileNotFoundError, ValueError):
                 pass
             
-            location = LocationInfo("Default", "California", timezone, 39.5, -119.8)
+            # Get coordinates from config if available
+            try:
+                config = load_config(config_path)
+                if 'location' in config:
+                    location_data = config['location']
+                    lat = location_data.get('latitude', 39.5)
+                    lon = location_data.get('longitude', -119.8)
+                    city = location_data.get('city', 'Default')
+                else:
+                    lat, lon, city = 39.5, -119.8, 'Default'
+            except (FileNotFoundError, ValueError):
+                lat, lon, city = 39.5, -119.8, 'Default'
+            location = LocationInfo(city, "Unknown", timezone, lat, lon)
             s_data = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
             
             dawn_val = cast(datetime | None, s_data['dawn'])
@@ -571,8 +583,9 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         image_index = int((position - 1e-9) * len(image_list)) + 5
     
     elif time_of_day == "sunset":
-        if use_sun_times and sunset_val:
-            period_start = sunset_val
+        if use_sun_times and dusk_val:
+            # Match detect_time_of_day_sun: sunset starts 45 min before dusk
+            period_start = dusk_val - timedelta(minutes=45)
         else:
             period_start = datetime.combine(now.date(), time_class(18, 0))
         if use_sun_times and dusk_val:
