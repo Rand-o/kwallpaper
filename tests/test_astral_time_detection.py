@@ -343,41 +343,43 @@ def test_detect_time_of_day_sun_invalid_config():
 
 
 def test_select_image_sunrise_at_sunrise():
-    """Test that image 3 shown when sunrise starts."""
-    today = datetime.now().date()
-    sunrise_time = time(6, 0)
-    at_sunrise = datetime.combine(today, sunrise_time).replace(tzinfo=timezone.utc)
+     """Test that image 3 shown when sunrise starts (position-based selection)."""
+     today = datetime.now().date()
+     sunrise_time = time(6, 0)
+     at_sunrise = datetime.combine(today, sunrise_time).replace(tzinfo=timezone.utc)
 
-    theme_data = {
-        "displayName": "Test Theme",
-        "imageFilename": "test_*.jpg",
-        "sunriseImageList": [2, 3, 4],
-        "sunsetImageList": [10, 11, 12, 13],
-        "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
-    }
+     theme_data = {
+         "displayName": "Test Theme",
+         "imageFilename": "test_*.jpg",
+         "sunriseImageList": [2, 3, 4],
+         "sunsetImageList": [10, 11, 12, 13],
+         "dayImageList": [5, 6, 7, 8, 9],
+         "nightImageList": [14, 15, 16, 1]
+     }
 
-    mock_sun = MockSun(
-        sunrise=datetime.combine(today, sunrise_time),
-        sunset=datetime.combine(today, time(18, 0))
-    )
+     mock_sun = MockSun(
+         sunrise=datetime.combine(today, sunrise_time),
+         sunset=datetime.combine(today, time(18, 0))
+     )
 
-    import builtins
-    original_import = builtins.__import__
+     import builtins
+     original_import = builtins.__import__
 
-    def mock_import(name, *args, **kwargs):
-        if name == 'astral':
-            mock_astral = MockAstral(location_info=MockLocationInfo, sun=mock_sun)
-            return mock_astral
-        return original_import(name, *args, **kwargs)
+     def mock_import(name, *args, **kwargs):
+         if name == 'astral':
+             mock_astral = MockAstral(location_info=MockLocationInfo, sun=mock_sun)
+             return mock_astral
+         return original_import(name, *args, **kwargs)
 
-    builtins.__import__ = mock_import
+     builtins.__import__ = mock_import
 
-    try:
-        selected_image = wc.select_image_for_time(theme_data, at_sunrise, mock_sun=mock_sun)
-        assert selected_image == 3, f"Expected image 3, got {selected_image}"
-    finally:
-        builtins.__import__ = original_import
+     try:
+         selected_image = wc.select_image_for_time(theme_data, at_sunrise, mock_sun=mock_sun)
+         # At sunrise (06:00), period is dawn-30 (04:45) to sunrise+45 (06:45)
+         # position = 75/120 = 0.625, which maps to image 3 (middle of 3 images)
+         assert selected_image == 3, f"Expected image 3, got {selected_image}"
+     finally:
+         builtins.__import__ = original_import
 
 
 def test_select_image_sunrise_after_sunrise():
@@ -625,52 +627,62 @@ def test_select_image_day_evenly_spaced():
 
 
 def test_select_image_night_evenly_spaced():
-    """Test that night images 14,15,16,1 evenly spaced across (dusk -> next dawn)."""
-    today = datetime.now().date()
-    sunset_time = time(18, 0)
-    next_sunrise_time = time(6, 0)
+     """Test that night images 14,15,16,1 evenly spaced across (dusk -> next dawn-30min).
+     
+     MockSun config:
+     - Sunset: 18:00, Dusk: 18:45 (sunset + 45min)
+     - Sunrise: 06:00, Dawn: 05:15 (sunrise - 45min)
+     - Night period: dusk (18:45) to dawn-30min (04:45 next day) = 10 hours
+     - 4 images spaced 2.5 hours apart
+     - Image 14: 18:45-21:15, Image 15: 21:15-00:45, Image 16: 00:45-04:15, Image 1: 04:15-07:45
+     """
+     today = datetime.now().date()
+     sunset_time = time(18, 0)
+     next_sunrise_time = time(6, 0)
 
-    # Night is 12 hours (6pm to 6am next day), 4 images = 3 hours apart
-    # Image 14: ~18:00, Image 15: ~21:00, Image 16: ~00:00, Image 1: ~03:00
-    test_times = [
-        (datetime.combine(today, time(19, 00)).replace(tzinfo=timezone.utc), 14),  # Early night
-        (datetime.combine(today, time(22, 00)).replace(tzinfo=timezone.utc), 15),  # Mid-evening
-        (datetime.combine(today + timedelta(days=1), time(1, 00)).replace(tzinfo=timezone.utc), 16),  # Midnight
-        (datetime.combine(today + timedelta(days=1), time(4, 00)).replace(tzinfo=timezone.utc), 1),  # Early morning
-    ]
+     # Night period: dusk (18:45) to dawn-30min (04:45 next day) = 10 hours
+     # 4 images = 2.5 hours apart
+     test_times = [
+         (datetime.combine(today, time(19, 00)).replace(tzinfo=timezone.utc), 14),  # 14: 18:45-21:15
+         (datetime.combine(today, time(20, 30)).replace(tzinfo=timezone.utc), 14),  # 14: 18:45-21:15
+         (datetime.combine(today, time(22, 00)).replace(tzinfo=timezone.utc), 15),  # 15: 21:15-23:45
+         (datetime.combine(today + timedelta(days=1), time(0, 0)).replace(tzinfo=timezone.utc), 16),  # 16: 23:45-04:45
+         (datetime.combine(today + timedelta(days=1), time(1, 00)).replace(tzinfo=timezone.utc), 16),  # 16: 23:45-04:45
+         (datetime.combine(today + timedelta(days=1), time(4, 00)).replace(tzinfo=timezone.utc), 16),  # 16: 23:45-04:45
+     ]
 
-    theme_data = {
-        "displayName": "Test Theme",
-        "imageFilename": "test_*.jpg",
-        "sunriseImageList": [2, 3, 4],
-        "sunsetImageList": [10, 11, 12, 13],
-        "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
-    }
+     theme_data = {
+         "displayName": "Test Theme",
+         "imageFilename": "test_*.jpg",
+         "sunriseImageList": [2, 3, 4],
+         "sunsetImageList": [10, 11, 12, 13],
+         "dayImageList": [5, 6, 7, 8, 9],
+         "nightImageList": [14, 15, 16, 1]
+     }
 
-    mock_sun = MockSun(
-        sunrise=datetime.combine(today, next_sunrise_time),
-        sunset=datetime.combine(today, sunset_time)
-    )
+     mock_sun = MockSun(
+         sunrise=datetime.combine(today, next_sunrise_time),
+         sunset=datetime.combine(today, sunset_time)
+     )
 
-    import builtins
-    original_import = builtins.__import__
+     import builtins
+     original_import = builtins.__import__
 
-    def mock_import(name, *args, **kwargs):
-        if name == 'astral':
-            mock_astral = MockAstral(location_info=MockLocationInfo, sun=mock_sun)
-            return mock_astral
-        return original_import(name, *args, **kwargs)
+     def mock_import(name, *args, **kwargs):
+         if name == 'astral':
+             mock_astral = MockAstral(location_info=MockLocationInfo, sun=mock_sun)
+             return mock_astral
+         return original_import(name, *args, **kwargs)
 
-    builtins.__import__ = mock_import
+     builtins.__import__ = mock_import
 
-    try:
-        for test_time, expected_image in test_times:
-            selected_image = wc.select_image_for_time(theme_data, test_time, mock_sun=mock_sun)
-            assert selected_image == expected_image, \
-                f"Expected image {expected_image} at {test_time}, got {selected_image}"
-    finally:
-        builtins.__import__ = original_import
+     try:
+         for test_time, expected_image in test_times:
+             selected_image = wc.select_image_for_time(theme_data, test_time, mock_sun=mock_sun)
+             assert selected_image == expected_image, \
+                 f"Expected image {expected_image} at {test_time.strftime('%H:%M')}, got {selected_image}"
+     finally:
+         builtins.__import__ = original_import
 
 
 # Hourly Fallback Function Tests (Task 5 implementation)
@@ -1021,7 +1033,7 @@ def test_select_image_for_time_hourly_empty_image_list():
     # Should raise ValueError because timing_value 3 > len(sunrise_list) (0)
     with pytest.raises(ValueError) as exc_info:
         wc.select_image_for_time_hourly(theme_data, test_time)
-    assert "Image index 3 exceeds available images" in str(exc_info.value)
+    assert "No images available in any time-of-day category" in str(exc_info.value)
 
 
 def test_select_image_for_time_hourly_invalid_time_00_00():

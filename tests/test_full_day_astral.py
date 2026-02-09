@@ -60,9 +60,9 @@ def test_every_minute_night_period():
     mock_sun = MockSun(test_date)
     
     # Night: from dusk (01:23 UTC next day) to just before dawn (15:06 UTC)
-    # This covers 03:00 to 07:06 LA time = 11:00 to 15:06 UTC (same day)
+    # This covers 03:00 to 06:36 LA time = 11:00 to 15:06 UTC (same day)
     current = datetime.combine(test_date, datetime.strptime("00:00", "%H:%M").time()).replace(tzinfo=ZoneInfo("America/Los_Angeles"))
-    end_time = mock_sun._dawn - timedelta(minutes=1)
+    end_time = mock_sun._dawn - timedelta(minutes=30)
     
     while current.astimezone(timezone.utc) < end_time:
         time_of_day = wallpaper_changer.detect_time_of_day_sun(
