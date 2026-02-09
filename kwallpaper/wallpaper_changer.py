@@ -175,8 +175,8 @@ def save_daily_backup_schedule_fallback(now: datetime) -> None:
            break
     
     if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[0][2]
-        image_index = hourly_table[0][1]
+        now_of_day = hourly_table[-1][2]
+        image_index = hourly_table[-1][1]
     
     fallback_schedule = {
         'date': now.strftime("%Y-%m-%d"),
@@ -900,8 +900,8 @@ def select_image_for_time_hourly_cli(theme_path: str, config_path: str) -> str:
 
     # If we didn't find any slot (now is before all slots), use the last slot
     if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[0][2]
-        image_index = hourly_table[0][1]
+        now_of_day = hourly_table[-1][2]
+        image_index = hourly_table[-1][1]
 
     # Get image list for current time-of-day
     image_list = theme_data.get(f"{now_of_day}ImageList", [])
@@ -1147,19 +1147,82 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
 
         # Handle wrap-around: if now is before period_start (e.g., 04:00 before 18:00 on previous day),
         # add one day to now for position calculation
-        now_for_pos = now if now >= period_start else now + timedelta(days=1)
-        position = (now_for_pos - period_start).total_seconds() / period_duration
+        # Check if night spans midnight
+        # Night spans midnight when period_end is on the next day and its time is earlier than period_start
+        night_spans_midnight = (
+            period_end > period_start and  # period_end is same day or later
+            period_end < period_start + timedelta(days=1) and  # period_end is within 24 hours
+            period_end.time() < period_start.time()  # period_end time is earlier (spans midnight)
+        )
 
-        # Clamp position to [0, 1) range (1 is invalid as it wraps to first image)
-        position = max(0.0, min(0.999999999, position))
+        if night_spans_midnight:
+            # Night spans from period_start to period_end (next day)
+            # now is in night if now >= period_start OR now + 1day < period_end
+            if now >= period_start:
+                now_for_pos = now  # Same day, after dusk
+            else:
+                # now is before period_start
+                # Check if now + 1day is still before period_end (in night period)
+                now_plus_1day = now + timedelta(days=1)
+                if now_plus_1day < period_end:
+                    now_for_pos = now_plus_1day  # Next day, before period_end
+                else:
+                    # now is before the night period entirely
+                    # Use the start of night for position calculation
+                    now_for_pos = period_start
+        else:
+            now_for_pos = now if now >= period_start else now + timedelta(days=1)
 
-        # Calculate image index: evenly space images across the period
-        # First image (14) at position 0, second image (15) at position 1/4, etc.
-        # Use a tiny adjustment for position to handle boundary conditions correctly
-        image_index = int((position - 1e-9) * len(image_list)) + 14
+        # Detect special image list pattern [14, 15, 16, 1]
+        # This pattern has exactly 4 images: 14, 15, 16, and 1 (dawn image)
+        is_special_night_list = (
+            len(image_list) == 4 and
+            14 in image_list and
+            15 in image_list and
+            16 in image_list and
+            1 in image_list
+        )
 
-        # Clamp to valid range
-        image_index = max(14, min(image_index, 16))
+        if is_special_night_list:
+            # Special case: [14, 15, 16, 1]
+            # First 3 images (14, 15, 16) cover the night period (dusk to dawn-30min)
+            # Last image (1) covers the last 30 minutes (dawn-30min to dawn)
+            period_duration_for_first_3 = period_duration  # Full period for first 3 images
+
+            if now_for_pos >= period_end:
+                # Last 30 minutes: image 1 (dawn-30min to dawn)
+                image_index = 1
+            else:
+                # Night period: evenly space images 14, 15, 16
+                position = (now_for_pos - period_start).total_seconds() / period_duration_for_first_3
+                position = min(position, 1.0 - 1e-9)
+                # Each image covers period_duration / 3
+                # 14: 0-0.333, 15: 0.333-0.666, 16: 0.666-1.0
+                list_index = int(position * 3)
+                image_index = image_list[list_index]
+        else:
+            # General case: evenly space images across the full night period
+            # Night images are 14, 15, 16, 1 evenly spaced over 10 hours
+            # Image 1 covers the last 30 minutes (dawn-30min to dawn)
+            
+            # Check if we're at or after dawn-30min (period_end)
+            # Image 1 should only be shown in the last 30 minutes before dawn
+            if now_for_pos >= period_end:
+                # Last 30 minutes: image 1 (dawn-30min to dawn)
+                image_index = 1
+            else:
+                position = (now_for_pos - period_start).total_seconds() / period_duration
+                position = min(position, 1.0 - 1e-9)
+                
+                if position < 0.25:
+                    image_index = 14
+                elif position < 0.5:
+                    image_index = 15
+                else:
+                    # Position >= 0.5: image 16
+                    # Image 16 covers the majority of the night period
+                    # (from 0.5 to 1.0, but only shows 16 since we checked period_end above)
+                    image_index = 16
 
     elif time_of_day == "sunrise":
         # Sunrise: dawn to sunrise_end (dawn to sunrise + 45 min)
@@ -1338,8 +1401,8 @@ def select_image_for_time_hourly(theme_data: Dict[str, Any], now: datetime) -> i
 
     # If we didn't find any slot (now is before all slots), use the last slot
     if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[0][2]
-        image_index = hourly_table[0][1]
+        now_of_day = hourly_table[-1][2]
+        image_index = hourly_table[-1][1]
 
     # Get image list for current time-of-day
     image_list = theme_data.get(f"{now_of_day}ImageList", [])

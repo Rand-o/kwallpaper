@@ -354,7 +354,7 @@ def test_select_image_sunrise_at_sunrise():
          "sunriseImageList": [2, 3, 4],
          "sunsetImageList": [10, 11, 12, 13],
          "dayImageList": [5, 6, 7, 8, 9],
-         "nightImageList": [14, 15, 16, 1]
+         "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
      }
 
      mock_sun = MockSun(
@@ -394,7 +394,7 @@ def test_select_image_sunrise_after_sunrise():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -433,7 +433,7 @@ def test_select_image_sunset_before_sunset():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],  # Image 10 before, 11 during, 12 going under, 13 completed
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -472,7 +472,7 @@ def test_select_image_sunset_during_sunset():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -511,7 +511,7 @@ def test_select_image_sunset_going_under():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -550,7 +550,7 @@ def test_select_image_sunset_completed():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -598,7 +598,7 @@ def test_select_image_day_evenly_spaced():
         "sunriseImageList": [2, 3, 4],
         "sunsetImageList": [10, 11, 12, 13],
         "dayImageList": [5, 6, 7, 8, 9],
-        "nightImageList": [14, 15, 16, 1]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     mock_sun = MockSun(
@@ -657,7 +657,7 @@ def test_select_image_night_evenly_spaced():
          "sunriseImageList": [2, 3, 4],
          "sunsetImageList": [10, 11, 12, 13],
          "dayImageList": [5, 6, 7, 8, 9],
-         "nightImageList": [14, 15, 16, 1]
+         "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
      }
 
      mock_sun = MockSun(
@@ -1047,12 +1047,12 @@ def test_select_image_for_time_hourly_invalid_time_00_00():
         "sunriseImageList": [1, 2, 3, 4],
         "dayImageList": [5, 6, 7, 8, 9],
         "sunsetImageList": [10, 11, 12, 13],
-        "nightImageList": [14, 15, 16]
+        "nightImageList": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]
     }
 
     # Should fall back to first entry (04:30) and return 1
     selected_image = wc.select_image_for_time_hourly(theme_data, test_time)
-    assert selected_image == 1, f"Expected image 1 for invalid midnight, got {selected_image}"
+    assert selected_image == 16, f"Expected image 16 for invalid midnight (midnight is night), got {selected_image}"
 
 
 # 4-Period Detection Tests (RED Phase - these will fail until implementation is updated)
