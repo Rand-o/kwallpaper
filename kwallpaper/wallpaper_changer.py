@@ -1173,56 +1173,90 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         else:
             now_for_pos = now if now >= period_start else now + timedelta(days=1)
 
-        # Detect special image list pattern [14, 15, 16, 1]
-        # This pattern has exactly 4 images: 14, 15, 16, and 1 (dawn image)
-        is_special_night_list = (
-            len(image_list) == 4 and
-            14 in image_list and
-            15 in image_list and
-            16 in image_list and
-            1 in image_list
-        )
+        # Detect image list patterns:
+        # Old format: [14, 15, 16, 1] in nightImageList
+        # New format: [14, 15, 16] in nightImageList, image 1 in sunriseImageList
+        # 
+        # For consecutive lists like [1, 2, ..., 16]:
+        # - Check if 14, 15, 16, 1 are all present (old format with 4 images)
+        # - Or if only 14, 15, 16 are night images (new format)
+        
+        # Check if all 4 night images (14, 15, 16, 1) are in the list
+        has_all_4_night = 14 in image_list and 15 in image_list and 16 in image_list and 1 in image_list
+        
+        # Check if only 3 images (14, 15, 16) are in the list (new format)
+        has_only_3_night = 14 in image_list and 15 in image_list and 16 in image_list
+        
+        # Detect new format: exactly 3 night images (14, 15, 16), not including 1
+        # This applies to both explicit [14, 15, 16] and consecutive lists where 1 is not in night
+        has_image_1_in_night = 1 in image_list
+        
+        if has_only_3_night and not has_all_4_night:
+            is_new_format = True
+            night_images = [14, 15, 16]
+        elif has_all_4_night:
+            is_new_format = False
+            night_images = [14, 15, 16, 1]
+        else:
+            # Fallback to old behavior for generic lists
+            is_new_format = False
+            night_images = [14, 15, 16]
 
-        if is_special_night_list:
-            # Special case: [14, 15, 16, 1]
-            # First 3 images (14, 15, 16) cover the night period (dusk to dawn-30min)
+        if not is_new_format and has_image_1_in_night:
+            # Old format: [14, 15, 16, 1]
             # Last image (1) covers the last 30 minutes (dawn-30min to dawn)
-            period_duration_for_first_3 = period_duration  # Full period for first 3 images
+            period_duration_for_first_3 = period_duration - timedelta(minutes=30).total_seconds()
 
             if now_for_pos >= period_end:
                 # Last 30 minutes: image 1 (dawn-30min to dawn)
                 image_index = 1
             else:
                 # Night period: evenly space images 14, 15, 16
+                # Each image should cover ~2.5h over 10h period
+                # But image 16 should cover the last part (0.5-1.0 = 5h)
+                # So: 14: 0-0.25, 15: 0.25-0.5, 16: 0.5-1.0
                 position = (now_for_pos - period_start).total_seconds() / period_duration_for_first_3
                 position = min(position, 1.0 - 1e-9)
-                # Each image covers period_duration / 3
-                # 14: 0-0.333, 15: 0.333-0.666, 16: 0.666-1.0
-                list_index = int(position * 3)
-                image_index = image_list[list_index]
-        else:
-            # General case: evenly space images across the full night period
-            # Night images are 14, 15, 16, 1 evenly spaced over 10 hours
-            # Image 1 covers the last 30 minutes (dawn-30min to dawn)
-            
-            # Check if we're at or after dawn-30min (period_end)
-            # Image 1 should only be shown in the last 30 minutes before dawn
-            if now_for_pos >= period_end:
-                # Last 30 minutes: image 1 (dawn-30min to dawn)
-                image_index = 1
-            else:
-                position = (now_for_pos - period_start).total_seconds() / period_duration
-                position = min(position, 1.0 - 1e-9)
-                
+                # Map to 3 images based on position ranges
                 if position < 0.25:
                     image_index = 14
                 elif position < 0.5:
                     image_index = 15
                 else:
-                    # Position >= 0.5: image 16
-                    # Image 16 covers the majority of the night period
-                    # (from 0.5 to 1.0, but only shows 16 since we checked period_end above)
                     image_index = 16
+        else:
+            # General case: evenly space images across the full night period
+            
+            if is_new_format:
+                # New format: [14, 15, 16] in nightImageList
+                # Images are evenly spaced across night period
+                # No image 1 in night - it's in sunriseImageList
+                position = (now_for_pos - period_start).total_seconds() / period_duration
+                position = min(position, 1.0 - 1e-9)
+                
+                # Each image covers 1/3 of the period
+                if position < 0.333:
+                    image_index = 14
+                elif position < 0.666:
+                    image_index = 15
+                else:
+                    image_index = 16
+            else:
+                # Old format: [14, 15, 16, 1] in nightImageList (but not has_image_1_in_night means 4+ images)
+                # Check if we're at or after dawn-30min (period_end)
+                if now_for_pos >= period_end:
+                    # Last 30 minutes: image 1 (dawn-30min to dawn)
+                    image_index = 1
+                else:
+                    position = (now_for_pos - period_start).total_seconds() / period_duration
+                    position = min(position, 1.0 - 1e-9)
+                    
+                    if position < 0.25:
+                        image_index = 14
+                    elif position < 0.5:
+                        image_index = 15
+                    else:
+                        image_index = 16
 
     elif time_of_day == "sunrise":
         # Sunrise: dawn to sunrise_end (dawn to sunrise + 45 min)
@@ -1247,12 +1281,12 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         position = (now - period_start).total_seconds() / period_duration
 
         # Calculate image index: evenly space images across the period
-        # First image (2) at position 0, second image (3) at position 1/3, third image (4) at position 2/3
-        # Use a tiny adjustment for position to handle boundary conditions correctly
-        image_index = int((position - 1e-9) * len(image_list)) + 2
+        # Map position to list index, then get the image from image_list
+        list_index = int((position - 1e-9) * len(image_list))
+        image_index = image_list[list_index]
 
         # Clamp to valid range
-        image_index = max(1, image_index)
+        image_index = max(1, min(image_index, max(image_list)))
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
