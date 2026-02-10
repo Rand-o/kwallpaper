@@ -49,10 +49,10 @@ DEFAULT_SCHEDULE_BACKUP_DIR = DEFAULT_CACHE_DIR / "schedule-backup"
 # ASTRAL HELPER FUNCTIONS
 # ============================================================================
 
-DURATION_DAWN_MINUTES = 45
-DURATION_SUNRISE_MINUTES = 45
-DURATION_SUNSET_MINUTES = 45
-DURATION_DUSK_MINUTES = 45
+DURATION_DAWN_MINUTES = 30
+DURATION_SUNRISE_MINUTES = 6
+DURATION_SUNSET_MINUTES = 6
+DURATION_DUSK_MINUTES = 30
 DURATION_IMAGE_9_MINUTES = 30
 
 
@@ -80,19 +80,69 @@ def get_period_duration(start_time: datetime, end_time: datetime) -> float:
     delta = end_time - start_time
     return delta.total_seconds()
 
+# ============================================================================
+# IMAGE LIST NORMALIZATION
+# ============================================================================
+
+def normalize_image_lists(theme_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize image lists to ensure image 1 is in sunrise, not night.
+
+    This handles themes where image 1 is incorrectly placed in nightImageList.
+    The script moves image 1 from nightImageList to sunriseImageList if:
+    - Image 1 is in nightImageList
+    - Image 1 is not already in sunriseImageList
+    - NightImageList contains 14, 15, 16 (indicating it's the 24hr Tahoe theme)
+
+    Args:
+        theme_data: Theme data dictionary with image lists
+
+    Returns:
+        Normalized theme data dictionary
+    """
+    # Make a copy to avoid modifying original
+    normalized = dict(theme_data)
+
+    # Get image lists (default to empty lists)
+    night_list = list(normalized.get('nightImageList', []))
+    sunrise_list = list(normalized.get('sunriseImageList', []))
+
+    # Check if we need to normalize
+    # Normalize if: image 1 is in night, not in sunrise, and night has 14,15,16
+    # AND the night list only contains 14, 15, 16 (and optionally 1) - the Tahoe pattern
+    has_image_1_in_night = 1 in night_list
+    has_image_1_in_sunrise = 1 in sunrise_list
+    has_14_15_16_in_night = all(x in night_list for x in [14, 15, 16])
+    
+    # Tahoe pattern: night list should only contain 14, 15, 16 (and optionally 1)
+    # This prevents normalizing themes with all 16 images in nightImageList
+    night_images_only_tahoe_pattern = set(night_list).issubset({14, 15, 16, 1})
+
+    if has_image_1_in_night and not has_image_1_in_sunrise and has_14_15_16_in_night and night_images_only_tahoe_pattern:
+        # Remove image 1 from night list
+        night_list = [img for img in night_list if img != 1]
+
+        # Add image 1 to sunrise list (in sorted order)
+        sunrise_list = sorted(sunrise_list + [1])
+
+        # Update the normalized dictionary
+        normalized['nightImageList'] = night_list
+        normalized['sunriseImageList'] = sunrise_list
+
+    return normalized
+
 
 # ============================================================================
 # SCHEDULE BACKUP FUNCTIONS
 # ============================================================================
 
 def get_daily_backup_path() -> Path:
-    """Get the path to today's schedule backup file."""
-    today = datetime.now().strftime("%Y-%m-%d")
-    return DEFAULT_SCHEDULE_BACKUP_DIR / f"schedule_{today}.json"
+    """Get the path to previous day's schedule backup file."""
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    return DEFAULT_SCHEDULE_BACKUP_DIR / f"schedule_{yesterday}.json"
 
 
 def load_daily_backup_schedule() -> Optional[Dict[str, Any]]:
-    """Load today's backup schedule if it exists and is valid."""
+    """Load previous day's backup schedule if it exists and is valid."""
     backup_path = get_daily_backup_path()
     if not backup_path.exists():
         return None
@@ -101,17 +151,17 @@ def load_daily_backup_schedule() -> Optional[Dict[str, Any]]:
         with open(backup_path, 'r') as f:
            backup = json.load(f)
         
-        backup_date = backup.get('date')
-        today = datetime.now().strftime("%Y-%m-%d")
-        if backup_date != today:
-           return None
-        
-        required = ['dawn', 'sunrise', 'sunset', 'dusk', 'time_of_day']
+        # Validate required fields
+        required = ['dawn', 'sunrise', 'sunset', 'dusk', 'time_of_day', 'previous_date']
         if not all(k in backup for k in required):
            return None
         
+        # Validate JSON structure
+        if not isinstance(backup, dict):
+           return None
+        
         return backup
-    except (json.JSONDecodeError, KeyError):
+    except (json.JSONDecodeError, KeyError, TypeError):
         return None
 
 
@@ -122,75 +172,27 @@ def save_daily_backup_schedule(
     dusk: Optional[datetime],
     time_of_day: str
 ) -> None:
-    """Save today's schedule to backup file."""
+    """Save previous day's schedule to backup file with 'previous_date' field."""
     DEFAULT_SCHEDULE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
     backup = {
-        'date': datetime.now().strftime("%Y-%m-%d"),
+        'date': yesterday,
         'dawn': dawn.isoformat() if dawn else None,
         'sunrise': sunrise.isoformat() if sunrise else None,
         'sunset': sunset.isoformat() if sunset else None,
         'dusk': dusk.isoformat() if dusk else None,
         'time_of_day': time_of_day,
         'timestamp': datetime.now().isoformat(),
-        'source': 'astral'
+        'source': 'astral',
+        'previous_date': yesterday
     }
     
     with open(get_daily_backup_path(), 'w') as f:
         json.dump(backup, f, indent=2)
 
 
-def save_daily_backup_schedule_fallback(now: datetime) -> None:
-    """Save hourly fallback schedule when Astral is unavailable or fails."""
-    DEFAULT_SCHEDULE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
-    
-    hourly_table = [
-        (datetime.strptime("04:30", "%H:%M").time(), 1, "sunrise"),
-        (datetime.strptime("06:15", "%H:%M").time(), 2, "sunrise"),
-        (datetime.strptime("06:30", "%H:%M").time(), 3, "sunrise"),
-        (datetime.strptime("07:30", "%H:%M").time(), 4, "sunrise"),
-        (datetime.strptime("10:00", "%H:%M").time(), 5, "day"),
-        (datetime.strptime("12:00", "%H:%M").time(), 6, "day"),
-        (datetime.strptime("14:00", "%H:%M").time(), 7, "day"),
-        (datetime.strptime("16:00", "%H:%M").time(), 8, "day"),
-        (datetime.strptime("17:00", "%H:%M").time(), 9, "day"),
-        (datetime.strptime("18:00", "%H:%M").time(), 10, "sunset"),
-        (datetime.strptime("18:30", "%H:%M").time(), 11, "sunset"),
-        (datetime.strptime("18:45", "%H:%M").time(), 12, "sunset"),
-        (datetime.strptime("19:00", "%H:%M").time(), 13, "sunset"),
-        (datetime.strptime("20:00", "%H:%M").time(), 14, "night"),
-        (datetime.strptime("22:30", "%H:%M").time(), 15, "night"),
-        (datetime.strptime("01:00", "%H:%M").time(), 16, "night"),
-    ]
-    
-    sorted_table = sorted(hourly_table, key=lambda x: x[0])
-    now_of_day = None
-    image_index = None
-    
-    for slot_time, slot_index, slot_category in sorted_table:
-        if now.time() >= slot_time:
-           now_of_day = slot_category
-           image_index = slot_index
-        else:
-           break
-    
-    if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[-1][2]
-        image_index = hourly_table[-1][1]
-    
-    fallback_schedule = {
-        'date': now.strftime("%Y-%m-%d"),
-        'dawn': None,
-        'sunrise': None,
-        'sunset': None,
-        'dusk': None,
-        'time_of_day': now_of_day,
-        'timestamp': now.isoformat(),
-        'source': 'fallback_hourly'
-    }
-    
-    with open(get_daily_backup_path(), 'w') as f:
-        json.dump(fallback_schedule, f, indent=2)
+
 
 
 # ============================================================================
@@ -336,6 +338,8 @@ def extract_theme(zip_path: str, cleanup: bool = False) -> Dict[str, Any]:
         with open(theme_json_path, 'r') as f:
            theme_data = json.load(f)
 
+        # Normalize image lists to ensure image 1 is in sunrise, not night
+        theme_data = normalize_image_lists(theme_data)
         # Return metadata
         result = {
            "extract_dir": str(extract_dir),
@@ -422,12 +426,12 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         except (FileNotFoundError, ValueError):
            pass
     
-    # If Astral is unavailable, load and use backup schedule
+    # If Astral is unavailable, load and use previous day's backup schedule
     if not ASTRAL_AVAILABLE:
         backup = load_daily_backup_schedule()
         if backup:
            return backup['time_of_day']
-        return detect_time_of_day()
+        raise RuntimeError("Astral unavailable and no previous day backup exists")
 
     try:
         # Import here to satisfy type checkers
@@ -573,16 +577,17 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         save_daily_backup_schedule(dawn_val, sunrise_val, sunset_val, dusk_val, time_of_day)
         return time_of_day
     except Exception as e:
-        # Astral failed - save hourly fallback backup for today
+        # Astral failed - try to load previous day's backup
         import traceback
         traceback.print_exc()
         
-        # Save fallback backup for current day
-        now = datetime.now(ZoneInfo(timezone)) if 'timezone' in dir() else datetime.now()
-        save_daily_backup_schedule_fallback(now)
+        # Load previous day's backup
+        backup = load_daily_backup_schedule()
+        if backup:
+            return backup['time_of_day']
         
-        # Return "night" to indicate we should use backup schedule
-        return "night"
+        # No backup available - raise error
+        raise RuntimeError(f"Astral failed and no previous day backup exists: {e}")
 
 
 def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
@@ -629,6 +634,8 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
 # Load theme data
     with open(theme_json_path, 'r') as f:
         theme_data = json.load(f)
+    # Normalize image lists to ensure image 1 is in sunrise, not night
+    theme_data = normalize_image_lists(theme_data)
 
     try:
         config = load_config(config_path)
@@ -721,7 +728,10 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         # add one day to now for position calculation
         now_for_pos = now if now >= period_start else now + timedelta(days=1)
         position = (now_for_pos - period_start).total_seconds() / period_duration
-        image_index = int((position - 1e-9) * len(image_list)) + 14
+        # Use list_index to look up from image_list instead of assuming consecutive numbering
+        list_index = int((position - 1e-9) * len(image_list))
+        list_index = max(0, min(list_index, len(image_list) - 1))
+        image_index = image_list[list_index]
     
     elif time_of_day == "sunrise":
         if use_sun_times and dawn_val:
@@ -813,168 +823,7 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     return str(image_path)
 
 
-def select_image_for_time_hourly_cli(theme_path: str, config_path: str) -> str:
-    """Select image based on current time using hourly fallback table.
 
-    This is the main CLI function used when Astral library is unavailable.
-
-    Args:
-        theme_path: Path to theme directory or zip file
-        config_path: Path to config file
-
-    Returns:
-        Path to selected image file
-
-    Raises:
-        FileNotFoundError: If theme.json not found
-        ValueError: If no images available or index exceeds available images
-    """
-    config_path_obj = Path(config_path)
-    theme_path_obj = Path(theme_path)
-
-    # Resolve zip file to theme directory
-    if theme_path_obj.is_file() and theme_path_obj.suffix in ['.zip', '.ddw']:
-        result = extract_theme(str(theme_path_obj), cleanup=False)
-        theme_path_obj = Path(result['extract_dir'])
-
-    # Find theme.json - first look for any .json file in root, then theme.json recursively
-    theme_json_path = None
-
-    # Check root directory for any .json file
-    for json_file in theme_path_obj.glob("*.json"):
-        theme_json_path = json_file
-        break
-
-    # If not found, search recursively for theme.json
-    if not theme_json_path:
-        for found_path in theme_path_obj.rglob("theme.json"):
-           theme_json_path = found_path
-           break
-
-    if not theme_json_path:
-        raise FileNotFoundError("theme.json not found in theme directory")
-
-    # Load theme data
-    with open(theme_json_path, 'r') as f:
-        theme_data = json.load(f)
-
-    # Get current time
-    now = datetime.now()
-
-    # Hourly fallback table
-    hourly_table = [
-        (datetime.strptime("04:30", "%H:%M").time(), 1, "sunrise"),
-        (datetime.strptime("06:15", "%H:%M").time(), 2, "sunrise"),
-        (datetime.strptime("06:30", "%H:%M").time(), 3, "sunrise"),
-        (datetime.strptime("07:30", "%H:%M").time(), 4, "sunrise"),
-        (datetime.strptime("10:00", "%H:%M").time(), 5, "day"),
-        (datetime.strptime("12:00", "%H:%M").time(), 6, "day"),
-        (datetime.strptime("14:00", "%H:%M").time(), 7, "day"),
-        (datetime.strptime("16:00", "%H:%M").time(), 8, "day"),
-        (datetime.strptime("17:00", "%H:%M").time(), 9, "day"),
-        (datetime.strptime("18:00", "%H:%M").time(), 10, "sunset"),
-        (datetime.strptime("18:30", "%H:%M").time(), 11, "sunset"),
-        (datetime.strptime("18:45", "%H:%M").time(), 12, "sunset"),
-        (datetime.strptime("19:00", "%H:%M").time(), 13, "sunset"),
-        (datetime.strptime("20:00", "%H:%M").time(), 14, "night"),
-        (datetime.strptime("22:30", "%H:%M").time(), 15, "night"),
-        (datetime.strptime("01:00", "%H:%M").time(), 16, "night"),
-    ]
-
-    # Find which time slot we're in
-    # Sort hourly_table by time to ensure correct ordering
-    sorted_table = sorted(hourly_table, key=lambda x: x[0])
-
-    now_of_day = None
-    image_index = None
-
-    # Find the last time slot where slot_time <= now
-    for slot_time, slot_index, slot_category in sorted_table:
-        if now.time() >= slot_time:
-           now_of_day = slot_category
-           image_index = slot_index
-        else:
-           # Once we find a time that's greater than now, we've gone too far
-           # Break and use the previous slot
-           break
-
-    # If we didn't find any slot (now is before all slots), use the last slot
-    if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[-1][2]
-        image_index = hourly_table[-1][1]
-
-    # Get image list for current time-of-day
-    image_list = theme_data.get(f"{now_of_day}ImageList", [])
-
-    # If current time-of-day has no images, switch to next category
-    while not image_list:
-        time_categories = ['sunrise', 'day', 'sunset', 'night']
-        try:
-           current_idx = time_categories.index(now_of_day)
-           if current_idx < len(time_categories) - 1:
-               now_of_day = time_categories[current_idx + 1]
-               image_list = theme_data.get(f"{now_of_day}ImageList", [])
-           else:
-               # All categories empty, raise error
-               raise ValueError("No images available in any time-of-day category")
-        except ValueError:
-           raise ValueError("No images available in any time-of-day category")
-
-    # Check if image index is valid
-    if image_index > len(image_list):
-        raise ValueError(
-           f"Image index {image_index} exceeds available images in {now_of_day} category "
-           f"(only {len(image_list)} images available)"
-        )
-
-    # Get image filename from index
-    image_filename = image_list[image_index - 1]  # 1-based index to 0-based
-
-    # Find image file
-    filename_pattern = theme_data.get("imageFilename", "*.jpg")
-
-    # Extract base name and extension from pattern for later use
-    if filename_pattern:
-        pattern_base = Path(filename_pattern).stem
-        pattern_ext = Path(filename_pattern).suffix
-    else:
-        pattern_base = "theme"
-        pattern_ext = ".jpg"
-
-    # Try to find file matching pattern
-    image_files = list(theme_path_obj.glob(filename_pattern))
-
-    # If pattern doesn't match, try numbered files
-    if not image_files:
-        # Try numbered files: pattern_base_1.ext, pattern_base_2.ext, etc.
-        numbered_files = []
-        for i in range(1, 100):
-           numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
-
-        # Filter to only existing files
-        image_files = [f for f in numbered_files if f.exists()]
-
-    if not image_files:
-        raise FileNotFoundError(
-           f"Image file not found: {image_filename}"
-        )
-
-    # Sort files to ensure consistent ordering
-    image_files.sort()
-
-    # Find the file with matching filename
-    image_path = None
-    for img_file in image_files:
-        if img_file.name == image_filename:
-           image_path = img_file
-           break
-
-    if not image_path:
-        raise FileNotFoundError(
-           f"Image file not found: {image_filename}"
-        )
-
-    return str(image_path)
 
 
 def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=None) -> int:
@@ -995,6 +844,8 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         ValueError: If no images available or index exceeds available images
     """
     # Initialize s to None (may be set inside try block)
+    # Normalize image lists to ensure image 1 is in sunrise, not night
+    theme_data = normalize_image_lists(theme_data)
     s = None
 
     # Get time-of-day category using Astral (mocked in tests)
@@ -1102,11 +953,19 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
 
            print(f"DEBUG select_image_for_time: time_of_day={time_of_day}", file=sys.stderr)
         except Exception:
-           # Fall back to simple detection if Astral fails
-           time_of_day = detect_time_of_day_hour(now.hour)
+           # Astral failed - try to load previous day's backup
+           backup = load_daily_backup_schedule()
+           if backup:
+               time_of_day = backup['time_of_day']
+           else:
+               raise RuntimeError(f"Astral failed and no previous day backup exists")
     else:
-        # No Astral available - use simple hour-based detection
-        time_of_day = detect_time_of_day_hour(now.hour)
+        # No Astral available - try to load previous day's backup
+        backup = load_daily_backup_schedule()
+        if backup:
+            time_of_day = backup['time_of_day']
+        else:
+            raise RuntimeError("Astral unavailable and no previous day backup exists")
 
     # Get sun times for period calculations (s may be None if Astral not available)
     dawn_val = s.get('dawn') if s else None
@@ -1228,19 +1087,26 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
             # General case: evenly space images across the full night period
             
             if is_new_format:
-                # New format: [14, 15, 16] in nightImageList
-                # Images are evenly spaced across night period
-                # No image 1 in night - it's in sunriseImageList
-                position = (now_for_pos - period_start).total_seconds() / period_duration
-                position = min(position, 1.0 - 1e-9)
+                # New format: [14, 15, 16] in nightImageList, image 1 in sunriseImageList
+                # Night period: dusk to dawn-30min (show 14, 15, 16 evenly)
+                # Last 30 minutes (dawn-30min to dawn): show image 1 (from sunriseImageList)
                 
-                # Each image covers 1/3 of the period
-                if position < 0.333:
-                    image_index = 14
-                elif position < 0.666:
-                    image_index = 15
+                # Check if we're in the last 30 minutes (dawn-30min to dawn)
+                if now_for_pos >= period_end:
+                    # Show image 1 during the last 30 minutes before dawn
+                    image_index = 1
                 else:
-                    image_index = 16
+                    # Show images 14, 15, 16 evenly across the night period
+                    position = (now_for_pos - period_start).total_seconds() / period_duration
+                    position = min(position, 1.0 - 1e-9)
+                    
+                    # Each image covers 1/3 of the period
+                    if position < 0.333:
+                        image_index = 14
+                    elif position < 0.666:
+                        image_index = 15
+                    else:
+                        image_index = 16
             else:
                 # Old format: [14, 15, 16, 1] in nightImageList (but not has_image_1_in_night means 4+ images)
                 # Check if we're at or after dawn-30min (period_end)
@@ -1356,138 +1222,7 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
     return image_index
 
 
-def detect_time_of_day_hour(hour: int) -> str:
-    """Detect time-of-day category based on hour (simplified version for testing).
 
-    Args:
-        hour: Hour value to use for detection
-
-    Returns:
-        Time-of-day category: "night", "sunrise", "day", or "sunset"
-    """
-    if 0 <= hour < 5:
-        return "night"
-    elif 5 <= hour < 7:
-        return "sunrise"
-    elif 7 <= hour < 17:
-        return "day"
-    elif 17 <= hour < 19:
-        return "sunset"
-    else:
-        return "night"
-
-
-def select_image_for_time_hourly(theme_data: Dict[str, Any], now: datetime) -> int:
-    """Select image index based on current time using hourly fallback table.
-
-    This is a wrapper function for testing purposes. It uses the same logic as
-    the main select_image_for_time_hourly() but adapted to work with test data.
-
-    Args:
-        theme_data: Theme data dictionary containing image lists and filename patterns
-        now: Current datetime for time-based selection
-
-    Returns:
-        Image index to select
-
-    Raises:
-        ValueError: If no images available or index exceeds available images
-    """
-    # Get current time
-    now = now
-
-    # Hourly fallback table
-    hourly_table = [
-        (datetime.strptime("04:30", "%H:%M").time(), 1, "sunrise"),
-        (datetime.strptime("06:15", "%H:%M").time(), 2, "sunrise"),
-        (datetime.strptime("06:30", "%H:%M").time(), 3, "sunrise"),
-        (datetime.strptime("07:30", "%H:%M").time(), 4, "sunrise"),
-        (datetime.strptime("10:00", "%H:%M").time(), 5, "day"),
-        (datetime.strptime("12:00", "%H:%M").time(), 6, "day"),
-        (datetime.strptime("14:00", "%H:%M").time(), 7, "day"),
-        (datetime.strptime("16:00", "%H:%M").time(), 8, "day"),
-        (datetime.strptime("17:00", "%H:%M").time(), 9, "day"),
-        (datetime.strptime("18:00", "%H:%M").time(), 10, "sunset"),
-        (datetime.strptime("18:30", "%H:%M").time(), 11, "sunset"),
-        (datetime.strptime("18:45", "%H:%M").time(), 12, "sunset"),
-        (datetime.strptime("19:00", "%H:%M").time(), 13, "sunset"),
-        (datetime.strptime("20:00", "%H:%M").time(), 14, "night"),
-        (datetime.strptime("22:30", "%H:%M").time(), 15, "night"),
-        (datetime.strptime("01:00", "%H:%M").time(), 16, "night"),
-    ]
-
-    # Find which time slot we're in
-    # Sort hourly_table by time to ensure correct ordering
-    sorted_table = sorted(hourly_table, key=lambda x: x[0])
-
-    now_of_day = None
-    image_index = None
-
-    # Find the last time slot where slot_time <= now
-    for slot_time, slot_index, slot_category in sorted_table:
-        if now.time() >= slot_time:
-           now_of_day = slot_category
-           image_index = slot_index
-        else:
-           # Once we find a time that's greater than now, we've gone too far
-           # Break and use the previous slot
-           break
-
-    # If we didn't find any slot (now is before all slots), use the last slot
-    if now_of_day is None or image_index is None:
-        now_of_day = hourly_table[-1][2]
-        image_index = hourly_table[-1][1]
-
-    # Get image list for current time-of-day
-    image_list = theme_data.get(f"{now_of_day}ImageList", [])
-
-    # If current time-of-day has no images, switch to next category
-    while not image_list:
-        time_categories = ['sunrise', 'day', 'sunset', 'night']
-        try:
-           current_idx = time_categories.index(now_of_day)
-           if current_idx < len(time_categories) - 1:
-               now_of_day = time_categories[current_idx + 1]
-               image_list = theme_data.get(f"{now_of_day}ImageList", [])
-           else:
-               # All categories empty, raise error
-               raise ValueError("No images available in any time-of-day category")
-        except ValueError:
-           raise ValueError("No images available in any time-of-day category")
-
-    # Check if image index is valid
-    if image_index > len(image_list):
-        raise ValueError(
-           f"Image index {image_index} exceeds available images in {now_of_day} category "
-           f"(only {len(image_list)} images available)"
-        )
-
-    return image_index
-
-
-def detect_time_of_day(hour: Optional[int] = None) -> str:
-    """Detect current time-of-day category based on hour.
-
-    Args:
-        hour: Optional hour value to use for detection (for testing)
-             If None, uses current system time.
-
-    Returns:
-        Time-of-day category: "night", "sunrise", "day", or "sunset"
-    """
-    if hour is None:
-        hour = datetime.now().hour
-
-    if 0 <= hour < 5:
-        return "night"
-    elif 5 <= hour < 7:
-        return "sunrise"
-    elif 7 <= hour < 17:
-        return "day"
-    elif 17 <= hour < 19:
-        return "sunset"
-    else:
-        return "night"
 
 
 def detect_time_of_day_for_time(time_str: str, config_path: Optional[str] = None) -> str:
@@ -1529,8 +1264,11 @@ def detect_time_of_day_for_time(time_str: str, config_path: Optional[str] = None
         except Exception:
            pass
         
-        # Fallback to hour-based detection
-        return detect_time_of_day(hour)
+        # Fallback to previous day's backup
+        backup = load_daily_backup_schedule()
+        if backup:
+            return backup['time_of_day']
+        raise RuntimeError("Astral failed and no previous day backup exists")
 
     except ValueError as e:
         raise ValueError(f"Invalid time format. Expected HH:MM, e.g., 14:30: {e}")
@@ -1595,10 +1333,18 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
     with open(theme_json_path, 'r') as f:
         theme_data = json.load(f)
 
+    # Normalize image lists to ensure image 1 is in sunrise, not night
+    theme_data = normalize_image_lists(theme_data)
+
     try:
         time_of_day = detect_time_of_day_for_time(time_str, config_path)
     except Exception:
-        time_of_day = detect_time_of_day(now.hour)
+        # Fallback to previous day's backup
+        backup = load_daily_backup_schedule()
+        if backup:
+            time_of_day = backup['time_of_day']
+        else:
+            raise RuntimeError("Astral failed and no previous day backup exists")
 
     image_list = theme_data.get(f"{time_of_day}ImageList", [])
 
@@ -1663,7 +1409,10 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
         position = (now_for_pos - period_start).total_seconds() / period_duration
         # Clamp position to [0, 1] range
         position = max(0.0, min(1.0, position))
-        image_index = int((position - 1e-9) * len(image_list)) + 14
+        # Use list_index to look up from image_list instead of assuming consecutive numbering
+        list_index = int((position - 1e-9) * len(image_list))
+        list_index = max(0, min(list_index, len(image_list) - 1))
+        image_index = image_list[list_index]
 
     elif time_of_day == "sunrise":
         # DEBUG
@@ -1673,8 +1422,9 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
         if use_sun_times and dawn_val:
            # Sunrise period starts at dawn - 30 min (last 30 min before dawn shows image 1)
            period_start = dawn_val - timedelta(minutes=30)
-           # Adjust to next day if needed
-           if period_start < datetime.combine(period_start.date(), time_class(0, 0)):
+           # Adjust to next day if needed (compare with timezone-aware midnight)
+           midnight = datetime.combine(period_start.date(), time_class(0, 0), tzinfo=period_start.tzinfo)
+           if period_start < midnight:
                period_start = period_start + timedelta(days=1)
         else:
            period_start = datetime.combine(now.date(), time_class(5, 15))
@@ -2012,10 +1762,7 @@ def run_change_command(args) -> int:
                        last_time_of_day = time_of_day
 
                        # Select new image for current time-of-day using time-based selection
-                       try:
-                           image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
-                       except Exception:
-                           image_path = select_image_for_time_hourly_cli(theme_path, str(config_path_obj))
+                       image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
                        print(f"  → Changing wallpaper to: {Path(image_path).name}")
 
                        if change_wallpaper(image_path):
@@ -2049,10 +1796,7 @@ def run_change_command(args) -> int:
         # Single change mode - use time-based selection
         print(f"Selecting image for current time: {time_of_day}")
         now = datetime.now(ZoneInfo(timezone))
-        if ASTRAL_AVAILABLE:
-           image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
-        else:
-           image_path = select_image_for_time_hourly_cli(theme_path, str(config_path_obj))
+        image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
         print(f"Changing wallpaper to: {image_path}")
 
         if change_wallpaper(image_path):
