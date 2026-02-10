@@ -34,3 +34,4 @@ test_*/
 # Temporary files
 *.tmp
 *.bak
+.sisyphus/
