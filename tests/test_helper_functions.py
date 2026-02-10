@@ -105,10 +105,10 @@ class TestDurationConstants:
 
     def test_duration_constant_values(self):
         """Test that duration constants have expected values."""
-        assert wallpaper_changer.DURATION_DAWN_MINUTES == 45
-        assert wallpaper_changer.DURATION_SUNRISE_MINUTES == 45
-        assert wallpaper_changer.DURATION_SUNSET_MINUTES == 45
-        assert wallpaper_changer.DURATION_DUSK_MINUTES == 45
+        assert wallpaper_changer.DURATION_DAWN_MINUTES == 30
+        assert wallpaper_changer.DURATION_SUNRISE_MINUTES == 6
+        assert wallpaper_changer.DURATION_SUNSET_MINUTES == 6
+        assert wallpaper_changer.DURATION_DUSK_MINUTES == 30
         assert wallpaper_changer.DURATION_IMAGE_9_MINUTES == 30
 
 
