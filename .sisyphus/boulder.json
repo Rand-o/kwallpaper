@@ -1,9 +1,9 @@
 {
-  "active_plan": "/home/admin/llama-cpp/projects/kwallpaper/.sisyphus/plans/astral-4-period.md",
-  "started_at": "2026-02-01T23:58:23.378Z",
+  "active_plan": "/home/admin/llama-cpp/projects/kwallpaper/.sisyphus/plans/daily-theme-shuffler.md",
+  "started_at": "2026-02-10T23:21:54.514Z",
   "session_ids": [
-    "ses_3e48f0fa4ffefZ6auNkcLLb79E",
-    "ses_3e458a8f0ffejOSNrpImLjwPkO"
+    "ses_3b6237bd2ffeaUHRrCuc21qYSm"
   ],
-  "plan_name": "astral-4-period"
+  "plan_name": "daily-theme-shuffler",
+  "agent": "atlas"
 }

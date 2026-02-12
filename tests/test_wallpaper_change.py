@@ -22,16 +22,25 @@ def test_change_wallpaper_success(monkeypatch):
      assert mock_run.call_count == 2  # pgrep + plasma-apply-wallpaperimage
 
 
-def test_change_wallpaper_kwriteconfig5_fails(monkeypatch):
-    """Test wallpaper change when kwriteconfig5 fails."""
+def test_change_wallpaper_plasma_apply_fails(monkeypatch):
+    """Test wallpaper change when plasma-apply-wallpaperimage fails but fallback succeeds."""
     mock_run = MagicMock()
     monkeypatch.setattr('subprocess.run', mock_run)
 
-    # Mock kwriteconfig5 failure
-    mock_run.side_effect = CalledProcessError(1, 'kwriteconfig5')
+    # Mock plasma-apply-wallpaperimage failure, then kwriteconfig5 success, then verify success
+    # First call: pgrep (success)
+    # Second call: plasma-apply-wallpaperimage (failure)
+    # Third call: kwriteconfig5 (success)
+    # Fourth call: kreadconfig5 verification (returns correct path)
+    mock_run.side_effect = [
+        MagicMock(returncode=0),  # pgrep succeeds (plasma is running)
+        MagicMock(returncode=1),  # plasma-apply-wallpaperimage fails
+        MagicMock(returncode=0),  # kwriteconfig5 succeeds
+        MagicMock(returncode=0, stdout='/path/to/image.jpg'),  # kreadconfig5 returns correct path
+    ]
 
     result = change_wallpaper('/path/to/image.jpg')
-    assert result is False
+    assert result is True
 
 
 def test_change_wallpaper_verification_fails(monkeypatch):
@@ -43,7 +52,7 @@ def test_change_wallpaper_verification_fails(monkeypatch):
      # First call: pgrep (success)
      # Second call: plasma-apply-wallpaperimage (failure)
      # Third call: kwriteconfig5 (success)
-     # Fourth call: kreadconfig5 verification (returns empty stdout)
+     # Fourth call: kreadconfig5 verification (returns empty - verification fails)
      mock_run.side_effect = [
          MagicMock(returncode=0),  # pgrep succeeds (plasma is running)
          MagicMock(returncode=1),  # plasma-apply-wallpaperimage fails
