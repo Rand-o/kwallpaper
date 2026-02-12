@@ -256,7 +256,13 @@ def save_daily_backup_schedule(
 DEFAULT_CONFIG = {
     "interval": 5400,
     "retry_attempts": 3,
-    "retry_delay": 5
+    "retry_delay": 5,
+    "scheduling": {
+        "interval": 60,
+        "daily_change_time": "00:00",
+        "run_cycle": True,
+        "run_daily_change": True
+    }
 }
 
 
@@ -330,6 +336,24 @@ def validate_config(config: Dict[str, Any]) -> None:
     # Validate retry_delay
     if not isinstance(config['retry_delay'], int) or config['retry_delay'] <= 0:
         raise ValueError("Config validation failed: 'retry_delay' must be a positive integer")
+
+    # Validate scheduling config if present
+    if 'scheduling' in config:
+        scheduling = config['scheduling']
+        if not isinstance(scheduling, dict):
+            raise ValueError("Config validation failed: 'scheduling' must be a dictionary")
+        if 'interval' in scheduling:
+            if not isinstance(scheduling['interval'], int) or scheduling['interval'] <= 0:
+                raise ValueError("Config validation failed: 'scheduling.interval' must be a positive integer")
+        if 'daily_change_time' in scheduling:
+            if not isinstance(scheduling['daily_change_time'], str):
+                raise ValueError("Config validation failed: 'scheduling.daily_change_time' must be a string")
+        if 'run_cycle' in scheduling:
+            if not isinstance(scheduling['run_cycle'], bool):
+                raise ValueError("Config validation failed: 'scheduling.run_cycle' must be a boolean")
+        if 'run_daily_change' in scheduling:
+            if not isinstance(scheduling['run_daily_change'], bool):
+                raise ValueError("Config validation failed: 'scheduling.run_daily_change' must be a boolean")
 
 
 # ============================================================================
