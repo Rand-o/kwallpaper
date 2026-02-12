@@ -3,6 +3,11 @@
 # Core dependencies
 astral>=2.2
 
+# GUI and scheduling dependencies
+apscheduler>=3.10.0
+PyQt6>=6.6.0
+PySide6>=6.6.0
+
 # Development dependencies
 pytest>=7.0.0
 pytest-cov>=4.0.0
