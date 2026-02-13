@@ -65,7 +65,7 @@ class ThemePreviewThread(QThread):
         self._running = True
         try:
             theme_json = None
-            for f in Path(self.theme_path).rglob("*.json"):
+            for f in Path(self.theme_path).glob("*.json"):
                 theme_json = f
                 break
                 
@@ -98,12 +98,30 @@ class ThemePreviewThread(QThread):
             
     def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
         theme_path = Path(theme_path)
-        for f in theme_path.glob("*.jpeg"):
-            if str(index) in f.stem:
-                return str(f)
-        for f in theme_path.glob("*.jpg"):
-            if str(index) in f.stem:
-                return str(f)
+        all_images = list(theme_path.glob("*.jpeg")) + list(theme_path.glob("*.jpg"))
+        
+        def get_index(f):
+            try:
+                stem = f.stem
+                if '_' in stem:
+                    num_part = stem.split('_')[-1]
+                    return int(num_part)
+            except (ValueError, IndexError):
+                pass
+            return 0
+            
+        all_images.sort(key=get_index)
+        
+        for f in all_images:
+            try:
+                stem = f.stem
+                if '_' in stem:
+                    num_part = stem.split('_')[-1]
+                    if int(num_part) == index:
+                        return str(f)
+            except (ValueError, IndexError):
+                pass
+                
         return None
         
     def stop(self):
@@ -311,65 +329,14 @@ class SettingsTab(QWidget):
             logger.error(f"Failed to save settings: {e}")
 
 
-class ThemePreviewWidget(QWidget):
-    """Widget to display theme preview."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.preview_thread = None
-        self._init_ui()
-        
-    def _init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(10)
-        self.setLayout(layout)
-        
-        self.preview_label = QLabel("Hover over theme to preview slideshow")
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumHeight(250)
-        self.preview_label.setStyleSheet("""
-            QLabel {
-                background-color: #1e1e1e;
-                color: #00ff00;
-                border: 2px dashed #555;
-                border-radius: 8px;
-                padding: 20px;
-            }
-        """)
-        layout.addWidget(self.preview_label)
-        
-    def start_preview(self, theme_path: str):
-        if self.preview_thread:
-            self.preview_thread.stop()
-            
-        self.preview_thread = ThemePreviewThread(theme_path)
-        self.preview_thread.preview_changed.connect(self._update_preview)
-        self.preview_thread.start()
-        
-    def stop_preview(self):
-        if self.preview_thread:
-            self.preview_thread.stop()
-            self.preview_thread = None
-        self.preview_label.setText("Hover over theme to preview slideshow")
-        
-    def _update_preview(self, image_path: str):
-        pixmap = QPixmap(image_path)
-        if pixmap.isNull():
-            self.preview_label.setText(f"Could not load: {Path(image_path).name}")
-        else:
-            scaled = pixmap.scaled(self.preview_label.size(), 
-                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-            self.preview_label.setPixmap(scaled)
-
-
 class ThemeCard(QFrame):
-    """Card widget for displaying a theme."""
+    """Card widget for displaying a theme with live preview."""
     
     def __init__(self, name: str, path: str, parent=None):
         super().__init__(parent)
         self.name = name
         self.path = path
+        self.preview_thread = None
         self._init_ui()
         
     def _init_ui(self):
@@ -399,7 +366,7 @@ class ThemeCard(QFrame):
         
         self.preview_label = QLabel("Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(180, 120)
+        self.preview_label.setMinimumSize(200, 150)
         self.preview_label.setStyleSheet("""
             QLabel {
                 background-color: #f5f5f5;
@@ -409,12 +376,16 @@ class ThemeCard(QFrame):
         """)
         layout.addWidget(self.preview_label)
         
+        # Load initial preview
         self._load_preview()
+        
+        # Set up hover events for live preview
+        self.enterEvent = self._on_enter
+        self.leaveEvent = self._on_leave
         
     def _load_preview(self):
         try:
             theme_json = None
-            # Look for any JSON file in the theme directory
             for f in Path(self.path).glob("*.json"):
                 theme_json = f
                 break
@@ -425,7 +396,6 @@ class ThemeCard(QFrame):
             with open(theme_json, 'r') as f:
                 theme_data = json.load(f)
                 
-            # Get first image from each category
             for category in ['sunrise', 'day', 'sunset', 'night']:
                 img_list = theme_data.get(f'{category}ImageList', [])
                 if img_list:
@@ -434,7 +404,7 @@ class ThemeCard(QFrame):
                     if img_file:
                         pixmap = QPixmap(img_file)
                         if not pixmap.isNull():
-                            scaled = pixmap.scaled(180, 120,
+                            scaled = pixmap.scaled(200, 150,
                                                    Qt.AspectRatioMode.KeepAspectRatio,
                                                    Qt.TransformationMode.SmoothTransformation)
                             self.preview_label.setPixmap(scaled)
@@ -469,6 +439,28 @@ class ThemeCard(QFrame):
                 pass
                 
         return None
+        
+    def _on_enter(self, event):
+        """Start preview slideshow when mouse enters."""
+        self.preview_thread = ThemePreviewThread(self.path)
+        self.preview_thread.preview_changed.connect(self._update_preview)
+        self.preview_thread.start()
+        
+    def _on_leave(self, event):
+        """Stop preview when mouse leaves."""
+        if self.preview_thread:
+            self.preview_thread.stop()
+            self.preview_thread = None
+        self._load_preview()  # Reset to static preview
+        
+    def _update_preview(self, image_path: str):
+        """Update preview with new image."""
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(200, 150,
+                                   Qt.AspectRatioMode.KeepAspectRatio,
+                                   Qt.TransformationMode.SmoothTransformation)
+            self.preview_label.setPixmap(scaled)
 
 
 class ThemesTab(QWidget):
@@ -478,7 +470,6 @@ class ThemesTab(QWidget):
         super().__init__(parent)
         self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
         self.themes = []
-        self.preview_widget = ThemePreviewWidget()
         self._init_ui()
         
     def _init_ui(self):
@@ -517,6 +508,7 @@ class ThemesTab(QWidget):
         title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         themes_layout.addWidget(title)
         
+        # Full-width scroll area for themes
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -530,8 +522,6 @@ class ThemesTab(QWidget):
         themes_layout.addWidget(scroll_area)
         
         layout.addWidget(themes_card)
-        
-        layout.addWidget(self.preview_widget)
         
         self.refresh_button = QPushButton("Refresh Themes")
         self.refresh_button.clicked.connect(self._load_themes)
@@ -579,12 +569,6 @@ class ThemesTab(QWidget):
             
         except Exception as e:
             logger.error(f"Failed to load themes: {e}")
-            
-    def start_preview(self, theme_path: str):
-        self.preview_widget.start_preview(theme_path)
-        
-    def stop_preview(self):
-        self.preview_widget.stop_preview()
 
 
 class WallpaperGUI(QMainWindow):
@@ -827,8 +811,6 @@ class WallpaperGUI(QMainWindow):
             self.log_area.append("Shutting down scheduler...")
             self.scheduler.stop(wait=True)
             self.log_area.append("Scheduler shutdown complete")
-        if hasattr(self.themes_tab, 'preview_widget'):
-            self.themes_tab.stop_preview()
         event.accept()
 
 
