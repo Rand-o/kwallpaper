@@ -1,9 +1,6 @@
 #!/usr/bin/env python3
 """
 KDE Wallpaper Changer - GUI Application with Scheduling
-
-A PyQt6 GUI application that uses APScheduler to automatically run
-wallpaper-changing tasks at specified intervals.
 """
 
 import sys
@@ -16,12 +13,12 @@ from datetime import datetime
 try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-        QPushButton, QLabel, QTextEdit, QGroupBox, QFormLayout, QTabWidget,
-        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QFileDialog, QGridLayout,
+        QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
+        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QGridLayout,
         QFrame, QScrollArea
     )
-    from PyQt6.QtCore import Qt, QTimer, pyqtSignal, QObject, QThread
-    from PyQt6.QtGui import QFont, QPixmap, QImage, QColor
+    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QThread
+    from PyQt6.QtGui import QFont, QPixmap, QColor
     PYQT6_AVAILABLE = True
 except ImportError:
     PYQT6_AVAILABLE = False
@@ -29,40 +26,30 @@ except ImportError:
 from kwallpaper.scheduler import SchedulerManager, create_scheduler
 from kwallpaper.wallpaper_changer import (
     load_config, save_config, DEFAULT_CONFIG_PATH,
-    discover_themes, extract_theme
+    discover_themes
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 
-class LogEmitter(QObject):
-    """Emits log messages as Qt signals for thread-safe GUI updates."""
-    log_signal = pyqtSignal(str, str)
-    
-    def __init__(self):
-        super().__init__()
-        self.log_signal.connect(self._on_log)
-        self._messages = []
-        
-    def _on_log(self, level: str, message: str):
-        self._messages.append((level, message))
-
-
-class ThemePreviewThread(QThread):
-    """Thread to handle theme preview slideshow."""
+class ThemePreviewWorker(QObject):
+    """Worker thread for theme preview slideshow."""
     preview_changed = pyqtSignal(str)
     
-    def __init__(self, theme_path: str, parent=None):
-        super().__init__(parent)
+    def __init__(self, theme_path: str):
+        super().__init__()
         self.theme_path = theme_path
         self._running = False
         
-    def run(self):
+    def start(self):
         self._running = True
+        self._run()
+        
+    def stop(self):
+        self._running = False
+        
+    def _run(self):
         try:
             theme_json = None
             for f in Path(self.theme_path).glob("*.json"):
@@ -83,7 +70,7 @@ class ThemePreviewThread(QThread):
             
             if not images:
                 return
-            
+                
             while self._running:
                 for img_idx in images:
                     if not self._running:
@@ -91,7 +78,8 @@ class ThemePreviewThread(QThread):
                     img_file = self._find_image_file(self.theme_path, img_idx)
                     if img_file:
                         self.preview_changed.emit(img_file)
-                    self.msleep(2000)
+                    import time
+                    time.sleep(2)
                     
         except Exception as e:
             logger.error(f"Preview error: {e}")
@@ -123,10 +111,6 @@ class ThemePreviewThread(QThread):
                 pass
                 
         return None
-        
-    def stop(self):
-        self._running = False
-        self.wait()
 
 
 class ModernCard(QFrame):
@@ -336,7 +320,7 @@ class ThemeCard(QFrame):
         super().__init__(parent)
         self.name = name
         self.path = path
-        self.preview_thread = None
+        self.preview_worker = None
         self._init_ui()
         
     def _init_ui(self):
@@ -367,6 +351,7 @@ class ThemeCard(QFrame):
         self.preview_label = QLabel("Preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumSize(200, 150)
+        self.preview_label.setMaximumSize(200, 150)
         self.preview_label.setStyleSheet("""
             QLabel {
                 background-color: #f5f5f5;
@@ -376,12 +361,7 @@ class ThemeCard(QFrame):
         """)
         layout.addWidget(self.preview_label)
         
-        # Load initial preview
         self._load_preview()
-        
-        # Set up hover events for live preview
-        self.enterEvent = self._on_enter
-        self.leaveEvent = self._on_leave
         
     def _load_preview(self):
         try:
@@ -440,18 +420,21 @@ class ThemeCard(QFrame):
                 
         return None
         
-    def _on_enter(self, event):
-        """Start preview slideshow when mouse enters."""
-        self.preview_thread = ThemePreviewThread(self.path)
-        self.preview_thread.preview_changed.connect(self._update_preview)
-        self.preview_thread.start()
+    def enterEvent(self, event):
+        """Start preview when mouse enters."""
+        if self.preview_worker is None:
+            self.preview_worker = ThemePreviewWorker(self.path)
+            self.preview_worker.preview_changed.connect(self._update_preview)
+        self.preview_worker.start()
+        super().enterEvent(event)
         
-    def _on_leave(self, event):
+    def leaveEvent(self, event):
         """Stop preview when mouse leaves."""
-        if self.preview_thread:
-            self.preview_thread.stop()
-            self.preview_thread = None
-        self._load_preview()  # Reset to static preview
+        if self.preview_worker:
+            self.preview_worker.stop()
+            self.preview_worker = None
+        self._load_preview()
+        super().leaveEvent(event)
         
     def _update_preview(self, image_path: str):
         """Update preview with new image."""
@@ -578,8 +561,6 @@ class WallpaperGUI(QMainWindow):
         super().__init__()
         self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
         self.scheduler: Optional[SchedulerManager] = None
-        self.log_emitter = LogEmitter()
-        
         self._init_ui()
         self._setup_scheduler()
         
@@ -799,13 +780,6 @@ class WallpaperGUI(QMainWindow):
         else:
             self.log_area.append("Failed to stop scheduler")
             
-    def log_message(self, level: str, message: str):
-        timestamp = self._get_timestamp()
-        self.log_area.append(f"[{timestamp}] [{level}] {message}")
-        
-    def _get_timestamp(self) -> str:
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
     def closeEvent(self, event):
         if self.scheduler is not None and self.scheduler.is_running():
             self.log_area.append("Shutting down scheduler...")
