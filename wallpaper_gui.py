@@ -303,9 +303,10 @@ class ThemePreviewWidget(QWidget):
         self.preview_label = QLabel("Select a theme to preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumHeight(400)
+        from PyQt6.QtWidgets import QSizePolicy
         self.preview_label.setSizePolicy(
-            Qt.SizePolicy.Policy.Expanding,
-            Qt.SizePolicy.Policy.Expanding
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Expanding
         )
         self.preview_label.setStyleSheet("""
             QLabel {
