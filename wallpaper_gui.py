@@ -17,7 +17,7 @@ try:
         QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QGridLayout,
         QFrame, QScrollArea
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QThread
+    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
     from PyQt6.QtGui import QFont, QPixmap, QColor
     PYQT6_AVAILABLE = True
 except ImportError:
@@ -33,23 +33,29 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-class ThemePreviewWorker(QObject):
-    """Worker thread for theme preview slideshow."""
+class ThemePreviewTimer(QObject):
+    """Timer-based preview worker for theme slideshow."""
     preview_changed = pyqtSignal(str)
     
-    def __init__(self, theme_path: str):
-        super().__init__()
+    def __init__(self, theme_path: str, parent=None):
+        super().__init__(parent)
         self.theme_path = theme_path
-        self._running = False
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._on_timeout)
+        self.images = []
+        self.current_index = 0
         
     def start(self):
-        self._running = True
-        self._run()
-        
+        self._load_images()
+        if self.images:
+            self.timer.start(2000)  # 2 seconds per image
+        else:
+            self.timer.stop()
+            
     def stop(self):
-        self._running = False
+        self.timer.stop()
         
-    def _run(self):
+    def _load_images(self):
         try:
             theme_json = None
             for f in Path(self.theme_path).glob("*.json"):
@@ -61,28 +67,16 @@ class ThemePreviewWorker(QObject):
                 
             with open(theme_json, 'r') as f:
                 theme_data = json.load(f)
-            
-            images = []
+                
             for category in ['sunrise', 'day', 'sunset', 'night']:
                 img_list = theme_data.get(f'{category}ImageList', [])
                 if img_list:
-                    images.append(img_list[0])
-            
-            if not images:
-                return
-                
-            while self._running:
-                for img_idx in images:
-                    if not self._running:
-                        break
-                    img_file = self._find_image_file(self.theme_path, img_idx)
+                    img_file = self._find_image_file(self.theme_path, img_list[0])
                     if img_file:
-                        self.preview_changed.emit(img_file)
-                    import time
-                    time.sleep(2)
-                    
+                        self.images.append(img_file)
+                    break
         except Exception as e:
-            logger.error(f"Preview error: {e}")
+            logger.warning(f"Could not load preview images: {e}")
             
     def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
         theme_path = Path(theme_path)
@@ -111,6 +105,11 @@ class ThemePreviewWorker(QObject):
                 pass
                 
         return None
+        
+    def _on_timeout(self):
+        if self.images:
+            self.preview_changed.emit(self.images[self.current_index])
+            self.current_index = (self.current_index + 1) % len(self.images)
 
 
 class ModernCard(QFrame):
@@ -320,7 +319,7 @@ class ThemeCard(QFrame):
         super().__init__(parent)
         self.name = name
         self.path = path
-        self.preview_worker = None
+        self.preview_timer = None
         self._init_ui()
         
     def _init_ui(self):
@@ -422,17 +421,17 @@ class ThemeCard(QFrame):
         
     def enterEvent(self, event):
         """Start preview when mouse enters."""
-        if self.preview_worker is None:
-            self.preview_worker = ThemePreviewWorker(self.path)
-            self.preview_worker.preview_changed.connect(self._update_preview)
-        self.preview_worker.start()
+        if self.preview_timer is None:
+            self.preview_timer = ThemePreviewTimer(self.path, self)
+            self.preview_timer.preview_changed.connect(self._update_preview)
+        self.preview_timer.start()
         super().enterEvent(event)
         
     def leaveEvent(self, event):
         """Stop preview when mouse leaves."""
-        if self.preview_worker:
-            self.preview_worker.stop()
-            self.preview_worker = None
+        if self.preview_timer:
+            self.preview_timer.stop()
+            self.preview_timer = None
         self._load_preview()
         super().leaveEvent(event)
         
