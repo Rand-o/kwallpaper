@@ -15,7 +15,7 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
         QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QGridLayout,
-        QFrame, QScrollArea
+        QFrame, QScrollArea, QFileDialog
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
     from PyQt6.QtGui import QFont, QPixmap, QColor
@@ -26,90 +26,11 @@ except ImportError:
 from kwallpaper.scheduler import SchedulerManager, create_scheduler
 from kwallpaper.wallpaper_changer import (
     load_config, save_config, DEFAULT_CONFIG_PATH,
-    discover_themes
+    discover_themes, extract_theme
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-
-class ThemePreviewTimer(QObject):
-    """Timer-based preview worker for theme slideshow."""
-    preview_changed = pyqtSignal(str)
-    
-    def __init__(self, theme_path: str, parent=None):
-        super().__init__(parent)
-        self.theme_path = theme_path
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self._on_timeout)
-        self.images = []
-        self.current_index = 0
-        
-    def start(self):
-        self._load_images()
-        if self.images:
-            self.timer.start(2000)  # 2 seconds per image
-        else:
-            self.timer.stop()
-            
-    def stop(self):
-        self.timer.stop()
-        
-    def _load_images(self):
-        try:
-            theme_json = None
-            for f in Path(self.theme_path).glob("*.json"):
-                theme_json = f
-                break
-                
-            if not theme_json:
-                return
-                
-            with open(theme_json, 'r') as f:
-                theme_data = json.load(f)
-                
-            for category in ['sunrise', 'day', 'sunset', 'night']:
-                img_list = theme_data.get(f'{category}ImageList', [])
-                if img_list:
-                    img_file = self._find_image_file(self.theme_path, img_list[0])
-                    if img_file:
-                        self.images.append(img_file)
-                    break
-        except Exception as e:
-            logger.warning(f"Could not load preview images: {e}")
-            
-    def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
-        theme_path = Path(theme_path)
-        all_images = list(theme_path.glob("*.jpeg")) + list(theme_path.glob("*.jpg"))
-        
-        def get_index(f):
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    return int(num_part)
-            except (ValueError, IndexError):
-                pass
-            return 0
-            
-        all_images.sort(key=get_index)
-        
-        for f in all_images:
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    if int(num_part) == index:
-                        return str(f)
-            except (ValueError, IndexError):
-                pass
-                
-        return None
-        
-    def _on_timeout(self):
-        if self.images:
-            self.preview_changed.emit(self.images[self.current_index])
-            self.current_index = (self.current_index + 1) % len(self.images)
 
 
 class ModernCard(QFrame):
@@ -313,13 +234,12 @@ class SettingsTab(QWidget):
 
 
 class ThemeCard(QFrame):
-    """Card widget for displaying a theme with live preview."""
+    """Card widget for displaying a theme."""
     
     def __init__(self, name: str, path: str, parent=None):
         super().__init__(parent)
         self.name = name
         self.path = path
-        self.preview_timer = None
         self._init_ui()
         
     def _init_ui(self):
@@ -418,31 +338,6 @@ class ThemeCard(QFrame):
                 pass
                 
         return None
-        
-    def enterEvent(self, event):
-        """Start preview when mouse enters."""
-        if self.preview_timer is None:
-            self.preview_timer = ThemePreviewTimer(self.path, self)
-            self.preview_timer.preview_changed.connect(self._update_preview)
-        self.preview_timer.start()
-        super().enterEvent(event)
-        
-    def leaveEvent(self, event):
-        """Stop preview when mouse leaves."""
-        if self.preview_timer:
-            self.preview_timer.stop()
-            self.preview_timer = None
-        self._load_preview()
-        super().leaveEvent(event)
-        
-    def _update_preview(self, image_path: str):
-        """Update preview with new image."""
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-            scaled = pixmap.scaled(200, 150,
-                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-            self.preview_label.setPixmap(scaled)
 
 
 class ThemesTab(QWidget):
@@ -459,13 +354,33 @@ class ThemesTab(QWidget):
         layout.setSpacing(15)
         self.setLayout(layout)
         
+        # Theme header section
+        header_card = ModernCard()
+        header_layout = QVBoxLayout()
+        header_card.setLayout(header_layout)
+        
+        header_title = QLabel("Themes")
+        header_title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        header_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_title.setStyleSheet("color: #0088cc; margin: 10px;")
+        header_layout.addWidget(header_title)
+        
+        header_desc = QLabel("Select a theme to apply to your desktop")
+        header_desc.setFont(QFont("Arial", 10))
+        header_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        header_desc.setStyleSheet("color: #666; margin-bottom: 15px;")
+        header_layout.addWidget(header_desc)
+        
+        layout.addWidget(header_card)
+        
+        # Current theme display
         current_card = ModernCard()
         current_layout = QVBoxLayout()
         current_card.setLayout(current_layout)
         
-        title = QLabel("Current Theme")
-        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        current_layout.addWidget(title)
+        current_title = QLabel("Current Theme")
+        current_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        current_layout.addWidget(current_title)
         
         self.current_theme_label = QLabel("Not set")
         self.current_theme_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -482,6 +397,7 @@ class ThemesTab(QWidget):
         
         layout.addWidget(current_card)
         
+        # Themes grid
         themes_card = ModernCard()
         themes_layout = QVBoxLayout()
         themes_card.setLayout(themes_layout)
@@ -490,7 +406,6 @@ class ThemesTab(QWidget):
         title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
         themes_layout.addWidget(title)
         
-        # Full-width scroll area for themes
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -505,9 +420,13 @@ class ThemesTab(QWidget):
         
         layout.addWidget(themes_card)
         
-        self.refresh_button = QPushButton("Refresh Themes")
-        self.refresh_button.clicked.connect(self._load_themes)
-        self.refresh_button.setStyleSheet("""
+        # Import button at bottom left
+        import_layout = QHBoxLayout()
+        import_layout.addStretch()
+        
+        self.import_button = QPushButton("Import Theme File")
+        self.import_button.clicked.connect(self._import_theme)
+        self.import_button.setStyleSheet("""
             QPushButton {
                 background-color: #0088cc;
                 color: white;
@@ -519,9 +438,10 @@ class ThemesTab(QWidget):
                 background-color: #006699;
             }
         """)
-        layout.addWidget(self.refresh_button)
+        import_layout.addWidget(self.import_button)
         
-        layout.addStretch()
+        layout.addLayout(import_layout)
+        
         self._load_themes()
         
     def _load_themes(self):
@@ -551,76 +471,39 @@ class ThemesTab(QWidget):
             
         except Exception as e:
             logger.error(f"Failed to load themes: {e}")
+            
+    def _import_theme(self):
+        """Import a theme file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Theme File",
+            "",
+            "Theme Files (*.ddw *.zip);;All Files (*)"
+        )
+        
+        if file_path:
+            try:
+                result = extract_theme(file_path, cleanup=False)
+                logger.info(f"Theme imported: {result['extract_dir']}")
+                self._load_themes()
+            except Exception as e:
+                logger.error(f"Failed to import theme: {e}")
 
 
-class WallpaperGUI(QMainWindow):
-    """Main GUI window for KDE Wallpaper Changer."""
+class SchedulerTab(QWidget):
+    """Scheduler tab with start/stop controls and event log."""
     
-    def __init__(self, config_path: Optional[str] = None):
-        super().__init__()
+    def __init__(self, config_path: Optional[str] = None, parent=None):
+        super().__init__(parent)
         self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
         self.scheduler: Optional[SchedulerManager] = None
         self._init_ui()
         self._setup_scheduler()
         
     def _init_ui(self):
-        self.setWindowTitle("KDE Wallpaper Changer")
-        self.setGeometry(100, 100, 900, 700)
-        
-        central = QWidget()
-        self.setCentralWidget(central)
-        
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(15)
-        central.setLayout(main_layout)
-        
-        title = QLabel("KDE Wallpaper Changer")
-        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("""
-            QLabel {
-                color: #0088cc;
-                padding: 15px;
-            }
-        """)
-        main_layout.addWidget(title)
-        
-        self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #d0d0d0;
-                border-radius: 8px;
-                background: #f9f9f9;
-            }
-            QTabBar::tab {
-                background-color: #e0e0e0;
-                color: #333;
-                padding: 10px 20px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #0088cc;
-                color: white;
-            }
-            QTabBar::tab:hover {
-                background-color: #006699;
-                color: white;
-            }
-        """)
-        main_layout.addWidget(self.tabs)
-        
-        self.settings_tab = SettingsTab(self.config_path)
-        self.tabs.addTab(self.settings_tab, "⚙️ Settings")
-        
-        self.themes_tab = ThemesTab(self.config_path)
-        self.tabs.addTab(self.themes_tab, "🎨 Themes")
-        
-        scheduler_tab = QWidget()
-        scheduler_layout = QVBoxLayout()
-        scheduler_layout.setSpacing(15)
-        scheduler_tab.setLayout(scheduler_layout)
+        layout = QVBoxLayout()
+        layout.setSpacing(15)
+        self.setLayout(layout)
         
         status_card = ModernCard()
         status_layout = QVBoxLayout()
@@ -643,7 +526,7 @@ class WallpaperGUI(QMainWindow):
         """)
         status_layout.addWidget(self.status_label)
         
-        scheduler_layout.addWidget(status_card)
+        layout.addWidget(status_card)
         
         button_layout = QHBoxLayout()
         button_layout.setSpacing(15)
@@ -691,7 +574,7 @@ class WallpaperGUI(QMainWindow):
         """)
         button_layout.addWidget(self.stop_button)
         
-        scheduler_layout.addLayout(button_layout)
+        layout.addLayout(button_layout)
         
         log_card = ModernCard()
         log_layout = QVBoxLayout()
@@ -716,9 +599,7 @@ class WallpaperGUI(QMainWindow):
         """)
         log_layout.addWidget(self.log_area)
         
-        scheduler_layout.addWidget(log_card)
-        
-        self.tabs.addTab(scheduler_tab, "⏱ Scheduler")
+        layout.addWidget(log_card)
         
     def _setup_scheduler(self):
         try:
@@ -778,12 +659,80 @@ class WallpaperGUI(QMainWindow):
             self.log_area.append("Scheduler stopped successfully")
         else:
             self.log_area.append("Failed to stop scheduler")
-            
+
+
+class WallpaperGUI(QMainWindow):
+    """Main GUI window for KDE Wallpaper Changer."""
+    
+    def __init__(self, config_path: Optional[str] = None):
+        super().__init__()
+        self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
+        self._init_ui()
+        
+    def _init_ui(self):
+        self.setWindowTitle("KDE Wallpaper Changer")
+        self.setGeometry(100, 100, 900, 700)
+        
+        central = QWidget()
+        self.setCentralWidget(central)
+        
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(15)
+        central.setLayout(main_layout)
+        
+        title = QLabel("KDE Wallpaper Changer")
+        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("""
+            QLabel {
+                color: #0088cc;
+                padding: 15px;
+            }
+        """)
+        main_layout.addWidget(title)
+        
+        self.tabs = QTabWidget()
+        self.tabs.setStyleSheet("""
+            QTabWidget::pane {
+                border: 1px solid #d0d0d0;
+                border-radius: 8px;
+                background: #f9f9f9;
+            }
+            QTabBar::tab {
+                background-color: #e0e0e0;
+                color: #333;
+                padding: 10px 20px;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 2px;
+            }
+            QTabBar::tab:selected {
+                background-color: #0088cc;
+                color: white;
+            }
+            QTabBar::tab:hover {
+                background-color: #006699;
+                color: white;
+            }
+        """)
+        main_layout.addWidget(self.tabs)
+        
+        # Tab order: Themes, Settings, Scheduler
+        self.themes_tab = ThemesTab(self.config_path)
+        self.tabs.addTab(self.themes_tab, "🎨 Themes")
+        
+        self.settings_tab = SettingsTab(self.config_path)
+        self.tabs.addTab(self.settings_tab, "⚙️ Settings")
+        
+        self.scheduler_tab = SchedulerTab(self.config_path)
+        self.tabs.addTab(self.scheduler_tab, "⏱ Scheduler")
+        
     def closeEvent(self, event):
-        if self.scheduler is not None and self.scheduler.is_running():
-            self.log_area.append("Shutting down scheduler...")
-            self.scheduler.stop(wait=True)
-            self.log_area.append("Scheduler shutdown complete")
+        if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
+            if self.scheduler_tab.scheduler.is_running():
+                self.scheduler_tab.log_area.append("Shutting down scheduler...")
+                self.scheduler_tab.scheduler.stop(wait=True)
+                self.scheduler_tab.log_area.append("Scheduler shutdown complete")
         event.accept()
 
 
