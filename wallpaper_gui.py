@@ -288,17 +288,25 @@ class ThemePreviewWidget(QWidget):
         
     def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(10)
+        layout.setSpacing(5)
+        layout.setContentsMargins(10, 10, 10, 10)
         self.setLayout(layout)
         
+        # Small title at top
         title = QLabel("Theme Preview")
-        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("color: #0088cc; margin: 5px;")
         layout.addWidget(title)
         
+        # Large preview area - takes most vertical space
         self.preview_label = QLabel("Select a theme to preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumHeight(400)
+        self.preview_label.setSizePolicy(
+            Qt.SizePolicy.Policy.Expanding,
+            Qt.SizePolicy.Policy.Expanding
+        )
         self.preview_label.setStyleSheet("""
             QLabel {
                 background-color: #f5f5f5;
@@ -343,6 +351,7 @@ class ThemePreviewWidget(QWidget):
             if pixmap.isNull():
                 self.preview_label.setText("Could not load preview image")
             else:
+                # Scale to fit while maintaining aspect ratio
                 scaled = pixmap.scaled(self.preview_label.size(),
                                        Qt.AspectRatioMode.KeepAspectRatio,
                                        Qt.TransformationMode.SmoothTransformation)
@@ -394,7 +403,7 @@ class ThemesTab(QWidget):
         layout.setSpacing(15)
         self.setLayout(layout)
         
-        # Left column - theme list (25-30% width)
+        # Left column - theme list (30% width)
         left_panel = QWidget()
         left_layout = QVBoxLayout()
         left_panel.setLayout(left_layout)
@@ -404,13 +413,13 @@ class ThemesTab(QWidget):
         header_card.setLayout(header_layout)
         
         header_title = QLabel("Themes")
-        header_title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        header_title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
         header_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_title.setStyleSheet("color: #0088cc; margin: 10px;")
         header_layout.addWidget(header_title)
         
         header_desc = QLabel("Select a theme to preview")
-        header_desc.setFont(QFont("Arial", 10))
+        header_desc.setFont(QFont("Arial", 9))
         header_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
         header_desc.setStyleSheet("color: #666;")
         header_layout.addWidget(header_desc)
