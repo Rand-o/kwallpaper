@@ -14,8 +14,8 @@ try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
-        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QGridLayout,
-        QFrame, QScrollArea, QFileDialog
+        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QFrame,
+        QScrollArea, QFileDialog, QListWidget, QListWidgetItem
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
     from PyQt6.QtGui import QFont, QPixmap, QColor
@@ -233,83 +233,124 @@ class SettingsTab(QWidget):
             logger.error(f"Failed to save settings: {e}")
 
 
-class ThemeCard(QFrame):
-    """Card widget for displaying a theme."""
+class ThemeListWidget(QListWidget):
+    """List widget for displaying themes."""
     
-    def __init__(self, name: str, path: str, parent=None):
+    theme_selected = pyqtSignal(str)
+    
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.name = name
-        self.path = path
-        self._init_ui()
-        
-    def _init_ui(self):
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setFrameShadow(QFrame.Shadow.Raised)
         self.setStyleSheet("""
-            QFrame {
+            QListWidget {
                 background-color: #ffffff;
-                border: 2px solid #e0e0e0;
-                border-radius: 12px;
-                padding: 10px;
+                border: 1px solid #d0d0d0;
+                border-radius: 6px;
+                padding: 5px;
             }
-            QFrame:hover {
-                border: 2px solid #0088cc;
+            QListWidget::item {
+                padding: 10px;
+                border-bottom: 1px solid #e0e0e0;
+            }
+            QListWidget::item:hover {
+                background-color: #e8f4fc;
+            }
+            QListWidget::item:selected {
+                background-color: #0088cc;
+                color: white;
             }
         """)
         
+    def load_themes(self):
+        """Load all themes into the list."""
+        self.clear()
+        
+        try:
+            themes = discover_themes()
+            themes.sort(key=lambda x: x[0].lower())
+            
+            for theme_name, theme_path in themes:
+                item = QListWidgetItem(theme_name)
+                item.setData(Qt.ItemDataRole.UserRole, theme_path)
+                self.addItem(item)
+                
+            logger.info(f"Loaded {len(themes)} themes")
+            
+        except Exception as e:
+            logger.error(f"Failed to load themes: {e}")
+
+
+class ThemePreviewWidget(QWidget):
+    """Widget to display theme preview."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._init_ui()
+        
+    def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(8)
+        layout.setSpacing(10)
         self.setLayout(layout)
         
-        name_label = QLabel(self.name)
-        name_label.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-        name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        name_label.setStyleSheet("color: #333;")
-        layout.addWidget(name_label)
+        title = QLabel("Theme Preview")
+        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(title)
         
-        self.preview_label = QLabel("Preview")
+        self.preview_label = QLabel("Select a theme to preview")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumSize(200, 150)
-        self.preview_label.setMaximumSize(200, 150)
+        self.preview_label.setMinimumHeight(400)
         self.preview_label.setStyleSheet("""
             QLabel {
                 background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 6px;
+                border: 2px dashed #ccc;
+                border-radius: 8px;
+                padding: 20px;
             }
         """)
         layout.addWidget(self.preview_label)
         
-        self._load_preview()
-        
-    def _load_preview(self):
+    def load_preview(self, theme_path: str):
+        """Load preview for given theme."""
         try:
             theme_json = None
-            for f in Path(self.path).glob("*.json"):
+            for f in Path(theme_path).glob("*.json"):
                 theme_json = f
                 break
                 
             if not theme_json:
+                self.preview_label.setText("No theme.json found")
                 return
                 
             with open(theme_json, 'r') as f:
                 theme_data = json.load(f)
                 
+            # Get first image from each category
+            images = []
             for category in ['sunrise', 'day', 'sunset', 'night']:
                 img_list = theme_data.get(f'{category}ImageList', [])
                 if img_list:
-                    img_idx = img_list[0]
-                    img_file = self._find_image_file(self.path, img_idx)
+                    img_file = self._find_image_file(theme_path, img_list[0])
                     if img_file:
-                        pixmap = QPixmap(img_file)
-                        if not pixmap.isNull():
-                            scaled = pixmap.scaled(200, 150,
-                                                   Qt.AspectRatioMode.KeepAspectRatio,
-                                                   Qt.TransformationMode.SmoothTransformation)
-                            self.preview_label.setPixmap(scaled)
+                        images.append(img_file)
                     break
+                    
+            if not images:
+                self.preview_label.setText("No images found in theme")
+                return
+                
+            # Show first image
+            pixmap = QPixmap(images[0])
+            if pixmap.isNull():
+                self.preview_label.setText("Could not load preview image")
+            else:
+                scaled = pixmap.scaled(self.preview_label.size(),
+                                       Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                self.preview_label.setPixmap(scaled)
+                
         except Exception as e:
-            logger.warning(f"Could not load preview for {self.name}: {e}")
+            logger.error(f"Failed to load preview: {e}")
+            self.preview_label.setText(f"Error loading preview: {e}")
             
     def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
         theme_path = Path(theme_path)
@@ -346,15 +387,18 @@ class ThemesTab(QWidget):
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
         self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
-        self.themes = []
         self._init_ui()
         
     def _init_ui(self):
-        layout = QVBoxLayout()
+        layout = QHBoxLayout()
         layout.setSpacing(15)
         self.setLayout(layout)
         
-        # Theme header section
+        # Left column - theme list (25-30% width)
+        left_panel = QWidget()
+        left_layout = QVBoxLayout()
+        left_panel.setLayout(left_layout)
+        
         header_card = ModernCard()
         header_layout = QVBoxLayout()
         header_card.setLayout(header_layout)
@@ -365,65 +409,20 @@ class ThemesTab(QWidget):
         header_title.setStyleSheet("color: #0088cc; margin: 10px;")
         header_layout.addWidget(header_title)
         
-        header_desc = QLabel("Select a theme to apply to your desktop")
+        header_desc = QLabel("Select a theme to preview")
         header_desc.setFont(QFont("Arial", 10))
         header_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_desc.setStyleSheet("color: #666; margin-bottom: 15px;")
+        header_desc.setStyleSheet("color: #666;")
         header_layout.addWidget(header_desc)
         
-        layout.addWidget(header_card)
+        left_layout.addWidget(header_card)
         
-        # Current theme display
-        current_card = ModernCard()
-        current_layout = QVBoxLayout()
-        current_card.setLayout(current_layout)
+        self.theme_list = ThemeListWidget()
+        self.theme_list.theme_selected.connect(self._on_theme_selected)
+        self.theme_list.itemSelectionChanged.connect(self._on_selection_changed)
+        left_layout.addWidget(self.theme_list)
         
-        current_title = QLabel("Current Theme")
-        current_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
-        current_layout.addWidget(current_title)
-        
-        self.current_theme_label = QLabel("Not set")
-        self.current_theme_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.current_theme_label.setStyleSheet("""
-            QLabel {
-                font-size: 14px;
-                color: #0088cc;
-                padding: 10px;
-                background-color: #e8f4fc;
-                border-radius: 6px;
-            }
-        """)
-        current_layout.addWidget(self.current_theme_label)
-        
-        layout.addWidget(current_card)
-        
-        # Themes grid
-        themes_card = ModernCard()
-        themes_layout = QVBoxLayout()
-        themes_card.setLayout(themes_layout)
-        
-        title = QLabel("Available Themes")
-        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        themes_layout.addWidget(title)
-        
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        self.themes_container = QWidget()
-        self.themes_grid = QGridLayout()
-        self.themes_grid.setSpacing(15)
-        self.themes_container.setLayout(self.themes_grid)
-        
-        scroll_area.setWidget(self.themes_container)
-        themes_layout.addWidget(scroll_area)
-        
-        layout.addWidget(themes_card)
-        
-        # Import button at bottom left
-        import_layout = QHBoxLayout()
-        import_layout.addStretch()
-        
+        # Import button at bottom
         self.import_button = QPushButton("Import Theme File")
         self.import_button.clicked.connect(self._import_theme)
         self.import_button.setStyleSheet("""
@@ -438,40 +437,29 @@ class ThemesTab(QWidget):
                 background-color: #006699;
             }
         """)
-        import_layout.addWidget(self.import_button)
+        left_layout.addWidget(self.import_button)
         
-        layout.addLayout(import_layout)
+        left_panel.setFixedWidth(300)
+        layout.addWidget(left_panel)
         
-        self._load_themes()
+        # Right panel - preview (70% width)
+        self.preview_widget = ThemePreviewWidget()
+        layout.addWidget(self.preview_widget)
         
-    def _load_themes(self):
-        while self.themes_grid.count():
-            child = self.themes_grid.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-                
-        self.themes = []
+        # Load themes
+        self.theme_list.load_themes()
         
-        try:
-            self.themes = discover_themes()
-            self.themes.sort(key=lambda x: x[0].lower())
+    def _on_selection_changed(self):
+        """Handle theme selection change."""
+        current_item = self.theme_list.currentItem()
+        if current_item:
+            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
+            self.preview_widget.load_preview(theme_path)
             
-            row = 0
-            col = 0
-            for theme_name, theme_path in self.themes:
-                theme_widget = ThemeCard(theme_name, theme_path)
-                self.themes_grid.addWidget(theme_widget, row, col)
-                
-                col += 1
-                if col > 3:
-                    col = 0
-                    row += 1
-                    
-            logger.info(f"Loaded {len(self.themes)} themes")
-            
-        except Exception as e:
-            logger.error(f"Failed to load themes: {e}")
-            
+    def _on_theme_selected(self, theme_path: str):
+        """Handle theme selected signal."""
+        self.preview_widget.load_preview(theme_path)
+        
     def _import_theme(self):
         """Import a theme file."""
         file_path, _ = QFileDialog.getOpenFileName(
@@ -485,7 +473,7 @@ class ThemesTab(QWidget):
             try:
                 result = extract_theme(file_path, cleanup=False)
                 logger.info(f"Theme imported: {result['extract_dir']}")
-                self._load_themes()
+                self.theme_list.load_themes()
             except Exception as e:
                 logger.error(f"Failed to import theme: {e}")
 
@@ -671,7 +659,7 @@ class WallpaperGUI(QMainWindow):
         
     def _init_ui(self):
         self.setWindowTitle("KDE Wallpaper Changer")
-        self.setGeometry(100, 100, 900, 700)
+        self.setGeometry(100, 100, 1000, 600)
         
         central = QWidget()
         self.setCentralWidget(central)
