@@ -184,7 +184,7 @@ class ModernCard(QFrame):
 
 
 class SettingsTab(QWidget):
-    """Settings tab for scheduler configuration - KDE 6 Plasma design with two-column layout."""
+    """Settings tab for scheduler configuration - KDE 6 Plasma design."""
     
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
@@ -197,16 +197,13 @@ class SettingsTab(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
         
-        # Two-column layout for settings
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(16)
+        # Left column - all settings (350px fixed width)
+        left_column = QWidget()
+        left_layout = QVBoxLayout()
+        left_layout.setSpacing(16)
+        left_column.setLayout(left_layout)
         
-        # Left column - Scheduler (50% width)
-        scheduler_column = QWidget()
-        scheduler_layout = QVBoxLayout()
-        scheduler_layout.setSpacing(16)
-        scheduler_column.setLayout(scheduler_layout)
-        
+        # Scheduler Section
         scheduler_card = ModernCard()
         scheduler_inner_layout = QVBoxLayout()
         scheduler_inner_layout.setSpacing(12)
@@ -244,16 +241,9 @@ class SettingsTab(QWidget):
         self.run_daily.setStyleSheet(KDE_STYLES['checkbox'])
         scheduler_inner_layout.addWidget(self.run_daily)
         
-        scheduler_layout.addWidget(scheduler_card)
-        scheduler_column.setFixedWidth(350)
-        content_layout.addWidget(scheduler_column)
+        left_layout.addWidget(scheduler_card)
         
-        # Right column - Location (50% width)
-        location_column = QWidget()
-        location_layout = QVBoxLayout()
-        location_layout.setSpacing(16)
-        location_column.setLayout(location_layout)
-        
+        # Location Section
         location_card = ModernCard()
         location_inner_layout = QVBoxLayout()
         location_inner_layout.setSpacing(12)
@@ -287,11 +277,16 @@ class SettingsTab(QWidget):
         self.longitude.setStyleSheet(KDE_STYLES['input'])
         location_form.addRow("Longitude:", self.longitude)
         
-        location_layout.addWidget(location_card)
-        location_column.setFixedWidth(350)
-        content_layout.addWidget(location_column)
+        left_layout.addWidget(location_card)
         
-        main_layout.addLayout(content_layout)
+        left_column.setFixedWidth(350)
+        main_layout.addWidget(left_column)
+        
+        # Right column - blank for future settings
+        right_column = QWidget()
+        right_column.setStyleSheet("background-color: #eff0f1;")
+        right_column.setMinimumWidth(300)
+        main_layout.addWidget(right_column)
         
         # Save Button
         self.save_button = QPushButton("Save Settings")
