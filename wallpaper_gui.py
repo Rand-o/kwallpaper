@@ -184,7 +184,7 @@ class ModernCard(QFrame):
 
 
 class SettingsTab(QWidget):
-    """Settings tab for scheduler configuration - KDE 6 Plasma design."""
+    """Settings tab for scheduler configuration - KDE 6 Plasma design with two-column layout."""
     
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
@@ -192,26 +192,35 @@ class SettingsTab(QWidget):
         self._init_ui()
         
     def _init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(16)
-        layout.setContentsMargins(20, 20, 20, 20)
-        self.setLayout(layout)
+        main_layout = QVBoxLayout()
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        self.setLayout(main_layout)
         
-        # Scheduler Section
-        scheduler_card = ModernCard()
+        # Two-column layout for settings
+        content_layout = QHBoxLayout()
+        content_layout.setSpacing(16)
+        
+        # Left column - Scheduler (50% width)
+        scheduler_column = QWidget()
         scheduler_layout = QVBoxLayout()
-        scheduler_layout.setSpacing(12)
-        scheduler_card.setLayout(scheduler_layout)
+        scheduler_layout.setSpacing(16)
+        scheduler_column.setLayout(scheduler_layout)
+        
+        scheduler_card = ModernCard()
+        scheduler_inner_layout = QVBoxLayout()
+        scheduler_inner_layout.setSpacing(12)
+        scheduler_card.setLayout(scheduler_inner_layout)
         
         title = QLabel("Scheduler")
         title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
         title.setStyleSheet(KDE_STYLES['label_title'])
-        scheduler_layout.addWidget(title)
+        scheduler_inner_layout.addWidget(title)
         
         scheduler_form = QFormLayout()
         scheduler_form.setSpacing(8)
         scheduler_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
-        scheduler_layout.addLayout(scheduler_form)
+        scheduler_inner_layout.addLayout(scheduler_form)
         
         self.cycle_interval = QSpinBox()
         self.cycle_interval.setRange(1, 3600)
@@ -228,30 +237,37 @@ class SettingsTab(QWidget):
         self.run_cycle = QCheckBox("Enable cycle task (runs every interval)")
         self.run_cycle.setChecked(True)
         self.run_cycle.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_layout.addWidget(self.run_cycle)
+        scheduler_inner_layout.addWidget(self.run_cycle)
         
         self.run_daily = QCheckBox("Enable daily change task (runs at specified time)")
         self.run_daily.setChecked(True)
         self.run_daily.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_layout.addWidget(self.run_daily)
+        scheduler_inner_layout.addWidget(self.run_daily)
         
-        layout.addWidget(scheduler_card)
+        scheduler_layout.addWidget(scheduler_card)
+        scheduler_column.setFixedWidth(350)
+        content_layout.addWidget(scheduler_column)
         
-        # Location Section
-        location_card = ModernCard()
+        # Right column - Location (50% width)
+        location_column = QWidget()
         location_layout = QVBoxLayout()
-        location_layout.setSpacing(12)
-        location_card.setLayout(location_layout)
+        location_layout.setSpacing(16)
+        location_column.setLayout(location_layout)
+        
+        location_card = ModernCard()
+        location_inner_layout = QVBoxLayout()
+        location_inner_layout.setSpacing(12)
+        location_card.setLayout(location_inner_layout)
         
         title = QLabel("Location")
         title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
         title.setStyleSheet(KDE_STYLES['label_title'])
-        location_layout.addWidget(title)
+        location_inner_layout.addWidget(title)
         
         location_form = QFormLayout()
         location_form.setSpacing(8)
         location_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
-        location_layout.addLayout(location_form)
+        location_inner_layout.addLayout(location_form)
         
         self.timezone = QLineEdit("America/Phoenix")
         self.timezone.setStyleSheet(KDE_STYLES['input'])
@@ -271,15 +287,19 @@ class SettingsTab(QWidget):
         self.longitude.setStyleSheet(KDE_STYLES['input'])
         location_form.addRow("Longitude:", self.longitude)
         
-        layout.addWidget(location_card)
+        location_layout.addWidget(location_card)
+        location_column.setFixedWidth(350)
+        content_layout.addWidget(location_column)
+        
+        main_layout.addLayout(content_layout)
         
         # Save Button
         self.save_button = QPushButton("Save Settings")
         self.save_button.clicked.connect(self._save_settings)
         self.save_button.setStyleSheet(KDE_STYLES['button_primary'])
-        layout.addWidget(self.save_button)
+        main_layout.addWidget(self.save_button)
         
-        layout.addStretch()
+        main_layout.addStretch()
         self._load_config()
         
     def _load_config(self):
