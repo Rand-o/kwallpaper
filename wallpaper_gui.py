@@ -17,8 +17,8 @@ try:
         QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QFrame,
         QScrollArea, QFileDialog, QListWidget, QListWidgetItem
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer
-    from PyQt6.QtGui import QFont, QPixmap, QColor
+    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QRectF
+    from PyQt6.QtGui import QFont, QPixmap, QColor, QPainter, QPen
     PYQT6_AVAILABLE = True
 except ImportError:
     PYQT6_AVAILABLE = False
@@ -391,6 +391,169 @@ class ThemePreviewWidget(QWidget):
         return None
 
 
+
+class ImageCrossFadeWidget(QWidget):
+    """Widget that smoothly cross-fades between multiple images."""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._images: list[str] = []
+        self._blend_value = 0.0
+        self._current_image_index = 0
+        self._pixmap_cache: dict[int, QPixmap] = {}
+        
+        # Title label
+        self.title_label = QLabel("Theme Preview")
+        self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.title_label.setStyleSheet("""
+            QLabel {
+                color: #0088cc;
+                padding: 15px;
+                background-color: #f5f5f5;
+                border-radius: 8px;
+                margin: 5px;
+            }
+        """)
+        
+        # Animation for cross-fade
+        self._animation = QPropertyAnimation(self, b'blend')
+        self._animation.setDuration(800)  # 0.8 seconds fade
+        self._animation.setEasingCurve(QEasingCurve.Type.Linear)
+        self._animation.finished.connect(self._on_animation_finished)
+        
+        # Auto-advance timer
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._advance_image)
+        self._timer.start(3000)  # Change every 3 seconds
+        
+        self.setMinimumSize(800, 450)
+        
+    @pyqtProperty(float)
+    def blend(self) -> float:
+        """Get current blend value (0.0 to 1.0)."""
+        return self._blend_value
+        
+    @blend.setter
+    def blend(self, value: float):
+        """Set current blend value and trigger repaint."""
+        self._blend_value = value
+        self.update()
+        
+    def set_images(self, image_paths: list[str]):
+        """Set the list of images to cross-fade between."""
+        self._images = image_paths
+        self._current_image_index = 0
+        self._pixmap_cache.clear()
+        
+        # Pre-cache first two images
+        if len(self._images) >= 1:
+            self._load_pixmap(0)
+        if len(self._images) >= 2:
+            self._load_pixmap(1)
+            
+        self._blend_value = 0.0
+        self.update()
+        
+    def _load_pixmap(self, index: int):
+        """Load and cache a pixmap for a given index."""
+        if index < 0 or index >= len(self._images):
+            return
+            
+        if index in self._pixmap_cache:
+            return
+            
+        image_path = self._images[index]
+        pixmap = QPixmap(image_path)
+        if not pixmap.isNull():
+            self._pixmap_cache[index] = pixmap
+            
+    def _advance_image(self):
+        """Advance to next image in the sequence."""
+        if len(self._images) < 2:
+            return
+            
+        # Start animation to fade out current image
+        self._animation.stop()
+        self._animation.setStartValue(self._blend_value)
+        self._animation.setEndValue(1.0)
+        self._animation.start()
+        
+    def _on_animation_finished(self):
+        """Handle animation completion - switch to next image."""
+        self._current_image_index = (self._current_image_index + 1) % len(self._images)
+        self._blend_value = 0.0
+        
+        # Pre-cache next image
+        next_index = (self._current_image_index + 1) % len(self._images)
+        self._load_pixmap(next_index)
+        
+        self.update()
+        
+    def paintEvent(self, event):
+        """Paint event for cross-fading images."""
+        if not self._images:
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # Get widget size
+        widget_size = self.size()
+        
+        # Get current and next image pixmaps
+        current_pixmap = self._pixmap_cache.get(self._current_image_index)
+        next_index = (self._current_image_index + 1) % len(self._images)
+        next_pixmap = self._pixmap_cache.get(next_index)
+        
+        if current_pixmap is None:
+            return
+            
+        # Scale images to fit widget while maintaining aspect ratio
+        scaled_current = self._scale_pixmap(current_pixmap, widget_size)
+        
+        if next_pixmap is not None:
+            scaled_next = self._scale_pixmap(next_pixmap, widget_size)
+        else:
+            scaled_next = scaled_current
+            
+        # Calculate position to center the image
+        x = (widget_size.width() - scaled_current.width()) // 2
+        y = (widget_size.height() - scaled_current.height()) // 2
+        
+        # Draw title above the image
+        title_height = 50  # Height of title area
+        title_y = 10
+        title_width = widget_size.width()
+        title_rect = QRectF(0, title_y, title_width, title_height)
+        painter.setOpacity(1.0)
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignCenter, self.title_label.text())
+        
+        # Draw separator line below title
+        painter.setOpacity(1.0)
+        painter.setPen(QPen(QColor("#d0d0d0"), 1))
+        separator_y = title_y + title_height - 5
+        painter.drawLine(0, separator_y, widget_size.width(), separator_y)
+        
+        # Draw current image below title (fades out as blend goes from 0 to 1)
+        image_y = separator_y + 10
+        painter.setOpacity(1.0 - self._blend_value)
+        painter.drawPixmap(x, image_y + y, scaled_current)
+        
+        # Draw next image (fades in as blend goes from 0 to 1)
+        painter.setOpacity(self._blend_value)
+        if next_pixmap is not None:
+            painter.drawPixmap(x, image_y + y, scaled_next)
+            
+    def _scale_pixmap(self, pixmap: QPixmap, target_size: tuple[int, int]) -> QPixmap:
+        """Scale pixmap to fit target size while maintaining aspect ratio."""
+        return pixmap.scaled(
+            target_size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation
+        )
+
+
 class ThemesTab(QWidget):
     """Themes tab showing all imported themes."""
     
@@ -408,24 +571,6 @@ class ThemesTab(QWidget):
         left_panel = QWidget()
         left_layout = QVBoxLayout()
         left_panel.setLayout(left_layout)
-        
-        header_card = ModernCard()
-        header_layout = QVBoxLayout()
-        header_card.setLayout(header_layout)
-        
-        header_title = QLabel("Themes")
-        header_title.setFont(QFont("Arial", 14, QFont.Weight.Bold))
-        header_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_title.setStyleSheet("color: #0088cc; margin: 10px;")
-        header_layout.addWidget(header_title)
-        
-        header_desc = QLabel("Select a theme to preview")
-        header_desc.setFont(QFont("Arial", 9))
-        header_desc.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        header_desc.setStyleSheet("color: #666;")
-        header_layout.addWidget(header_desc)
-        
-        left_layout.addWidget(header_card)
         
         self.theme_list = ThemeListWidget()
         self.theme_list.theme_selected.connect(self._on_theme_selected)
@@ -453,22 +598,34 @@ class ThemesTab(QWidget):
         layout.addWidget(left_panel)
         
         # Right panel - preview (70% width)
-        self.preview_widget = ThemePreviewWidget()
+        self.preview_widget = ImageCrossFadeWidget()
         layout.addWidget(self.preview_widget)
         
         # Load themes
         self.theme_list.load_themes()
+        
+        # Select first theme if available
+        if self.theme_list.count() > 0:
+            self.theme_list.setCurrentRow(0)
+            # Trigger preview update
+            current_item = self.theme_list.currentItem()
+            if current_item:
+                theme_path = current_item.data(Qt.ItemDataRole.UserRole)
+                images = self._load_theme_images(theme_path)
+                self.preview_widget.set_images(images)
         
     def _on_selection_changed(self):
         """Handle theme selection change."""
         current_item = self.theme_list.currentItem()
         if current_item:
             theme_path = current_item.data(Qt.ItemDataRole.UserRole)
-            self.preview_widget.load_preview(theme_path)
+            images = self._load_theme_images(theme_path)
+            self.preview_widget.set_images(images)
             
     def _on_theme_selected(self, theme_path: str):
         """Handle theme selected signal."""
-        self.preview_widget.load_preview(theme_path)
+        images = self._load_theme_images(theme_path)
+        self.preview_widget.set_images(images)
         
     def _import_theme(self):
         """Import a theme file."""
@@ -487,6 +644,77 @@ class ThemesTab(QWidget):
             except Exception as e:
                 logger.error(f"Failed to import theme: {e}")
 
+
+
+    def _load_theme_images(self, theme_path: str) -> list[str]:
+        """Extract images from theme for cross-fade preview (images 1-16, sorted)."""
+        images = []
+        try:
+            theme_json = None
+            for f in Path(theme_path).glob("*.json"):
+                theme_json = f
+                break
+                
+            if not theme_json:
+                return images
+                
+            with open(theme_json, 'r') as f:
+                theme_data = json.load(f)
+                
+            # Get images 1-16 from all categories, sorted by index
+            all_image_indices = []
+            for category in ['sunrise', 'day', 'sunset', 'night']:
+                img_list = theme_data.get(f'{category}ImageList', [])
+                for img_index in img_list:
+                    # Only include images 1-16
+                    if 1 <= img_index <= 16:
+                        all_image_indices.append(img_index)
+            
+            # Sort indices and get unique values
+            all_image_indices = sorted(set(all_image_indices))
+            
+            # Get image files in sorted order
+            for img_index in all_image_indices:
+                img_file = self._find_image_file(theme_path, img_index)
+                if img_file and img_file not in images:
+                    images.append(img_file)
+                        
+        except Exception as e:
+            logger.error(f"Failed to load theme images: {e}")
+            
+        # Debug: log the images being loaded
+        logger.info(f"Loaded {len(images)} images for preview: {all_image_indices}")
+            
+        return images
+
+    def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
+        """Find image file by index in theme directory."""
+        theme_path = Path(theme_path)
+        all_images = list(theme_path.glob("*.jpeg")) + list(theme_path.glob("*.jpg"))
+        
+        def get_index(f):
+            try:
+                stem = f.stem
+                if '_' in stem:
+                    num_part = stem.split('_')[-1]
+                    return int(num_part)
+            except (ValueError, IndexError):
+                pass
+            return 0
+            
+        all_images.sort(key=get_index)
+        
+        for f in all_images:
+            try:
+                stem = f.stem
+                if '_' in stem:
+                    num_part = stem.split('_')[-1]
+                    if int(num_part) == index:
+                        return str(f)
+            except (ValueError, IndexError):
+                pass
+                
+        return None
 
 class SchedulerTab(QWidget):
     """Scheduler tab with start/stop controls and event log."""
@@ -669,7 +897,10 @@ class WallpaperGUI(QMainWindow):
         
     def _init_ui(self):
         self.setWindowTitle("KDE Wallpaper Changer")
-        self.setGeometry(100, 100, 1000, 600)
+        # Set initial size to 16:9 aspect ratio (matching wallpaper resolution 5120x2880)
+        self.setGeometry(100, 100, 1600, 900)
+        # Maintain 16:9 aspect ratio
+        self.setMinimumSize(800, 450)
         
         central = QWidget()
         self.setCentralWidget(central)
