@@ -30,31 +30,161 @@ from kwallpaper.wallpaper_changer import (
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# KDE 6 Plasma Design System
+KDE_COLORS = {
+    'background': '#eff0f1',
+    'panel': '#ffffff',
+    'text_primary': '#31363b',
+    'text_secondary': '#636d76',
+    'accent': '#0082FC',
+    'accent_hover': '#0072e6',
+    'accent_active': '#005db3',
+    'border': '#d3d6d9',
+    'border_hover': '#0082FC',
+}
+
+KDE_STYLES = {
+    'card': """
+        QFrame {
+            background-color: #ffffff;
+            border: 1px solid #d3d6d9;
+            border-radius: 8px;
+            padding: 16px;
+        }
+        QFrame:hover {
+            border: 1px solid #0082FC;
+        }
+    """,
+    'button_primary': """
+        QPushButton {
+            background-color: #0082FC;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: #0072e6;
+        }
+        QPushButton:pressed {
+            background-color: #005db3;
+        }
+    """,
+    'button_secondary': """
+        QPushButton {
+            background-color: #eff0f1;
+            color: #31363b;
+            border: 1px solid #d3d6d9;
+            border-radius: 6px;
+            padding: 8px 16px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: #e0e3e6;
+            border: 1px solid #0082FC;
+        }
+    """,
+    'input': """
+        QLineEdit, QSpinBox, QDoubleSpinBox {
+            background-color: #ffffff;
+            border: 1px solid #d3d6d9;
+            border-radius: 4px;
+            padding: 6px 10px;
+            color: #31363b;
+            min-height: 28px;
+        }
+        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
+            border: 2px solid #0082FC;
+            padding: 5px 9px;
+        }
+    """,
+    'checkbox': """
+        QCheckBox {
+            spacing: 8px;
+            padding: 4px;
+            color: #31363b;
+        }
+        QCheckBox::indicator {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #d3d6d9;
+            border-radius: 4px;
+            background-color: #ffffff;
+        }
+        QCheckBox::indicator:hover {
+            border: 2px solid #0082FC;
+        }
+        QCheckBox::indicator:checked {
+            background-color: #0082FC;
+            border: 2px solid #0082FC;
+        }
+    """,
+    'tab_widget': """
+        QTabWidget::pane {
+            border: 1px solid #d3d6d9;
+            border-radius: 8px;
+            background-color: #eff0f1;
+        }
+        QTabBar::tab {
+            background-color: #eff0f1;
+            color: #31363b;
+            padding: 8px 16px;
+            border: 1px solid #d3d6d9;
+            border-bottom: none;
+            border-top-left-radius: 6px;
+            border-top-right-radius: 6px;
+            margin-right: 2px;
+        }
+        QTabBar::tab:hover {
+            background-color: #e0e3e6;
+        }
+        QTabBar::tab:selected {
+            background-color: #ffffff;
+            color: #0082FC;
+            border-bottom: 2px solid #0082FC;
+        }
+    """,
+    'scroll_area': """
+        QScrollArea {
+            border: none;
+            background-color: #eff0f1;
+        }
+        QScrollArea > QWidget > QWidget {
+            background-color: #eff0f1;
+        }
+    """,
+    'label_title': """
+        QLabel {
+            color: #31363b;
+            font-weight: 600;
+            font-size: 14px;
+        }
+    """,
+    'label_subtitle': """
+        QLabel {
+            color: #636d76;
+            font-size: 12px;
+        }
+    """,
+}
+
 logger = logging.getLogger(__name__)
 
 
 class ModernCard(QFrame):
-    """Modern card widget with KDE styling."""
+    """Modern card widget with KDE 6 Plasma styling."""
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setFrameShadow(QFrame.Shadow.Raised)
-        self.setStyleSheet("""
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #d0d0d0;
-                border-radius: 8px;
-                padding: 15px;
-            }
-            QFrame:hover {
-                border: 2px solid #0088cc;
-            }
-        """)
+        self.setStyleSheet(KDE_STYLES['card'])
 
 
 class SettingsTab(QWidget):
-    """Settings tab for scheduler configuration."""
+    """Settings tab for scheduler configuration - KDE 6 Plasma design."""
     
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
@@ -63,130 +193,90 @@ class SettingsTab(QWidget):
         
     def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(15)
+        layout.setSpacing(16)
+        layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(layout)
         
+        # Scheduler Section
         scheduler_card = ModernCard()
         scheduler_layout = QVBoxLayout()
+        scheduler_layout.setSpacing(12)
         scheduler_card.setLayout(scheduler_layout)
         
-        title = QLabel("Scheduler Settings")
-        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title = QLabel("Scheduler")
+        title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        title.setStyleSheet(KDE_STYLES['label_title'])
         scheduler_layout.addWidget(title)
         
         scheduler_form = QFormLayout()
-        scheduler_form.setSpacing(10)
+        scheduler_form.setSpacing(8)
+        scheduler_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
         scheduler_layout.addLayout(scheduler_form)
         
         self.cycle_interval = QSpinBox()
         self.cycle_interval.setRange(1, 3600)
         self.cycle_interval.setValue(60)
         self.cycle_interval.setSuffix(" seconds")
-        self.cycle_interval.setStyleSheet("""
-            QSpinBox {
-                padding: 8px;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                background: #f9f9f9;
-            }
-        """)
+        self.cycle_interval.setStyleSheet(KDE_STYLES['input'])
         scheduler_form.addRow("Cycle Interval:", self.cycle_interval)
         
         self.daily_change_time = QLineEdit("00:00")
         self.daily_change_time.setPlaceholderText("HH:MM")
-        self.daily_change_time.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                background: #f9f9f9;
-            }
-        """)
+        self.daily_change_time.setStyleSheet(KDE_STYLES['input'])
         scheduler_form.addRow("Daily Change Time:", self.daily_change_time)
         
         self.run_cycle = QCheckBox("Enable cycle task (runs every interval)")
         self.run_cycle.setChecked(True)
-        self.run_cycle.setStyleSheet("QCheckBox { padding: 5px; }")
-        scheduler_form.addRow("", self.run_cycle)
+        self.run_cycle.setStyleSheet(KDE_STYLES['checkbox'])
+        scheduler_layout.addWidget(self.run_cycle)
         
         self.run_daily = QCheckBox("Enable daily change task (runs at specified time)")
         self.run_daily.setChecked(True)
-        self.run_daily.setStyleSheet("QCheckBox { padding: 5px; }")
-        scheduler_form.addRow("", self.run_daily)
+        self.run_daily.setStyleSheet(KDE_STYLES['checkbox'])
+        scheduler_layout.addWidget(self.run_daily)
         
         layout.addWidget(scheduler_card)
         
+        # Location Section
         location_card = ModernCard()
         location_layout = QVBoxLayout()
+        location_layout.setSpacing(12)
         location_card.setLayout(location_layout)
         
-        title = QLabel("Location Settings")
-        title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
+        title = QLabel("Location")
+        title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        title.setStyleSheet(KDE_STYLES['label_title'])
         location_layout.addWidget(title)
         
         location_form = QFormLayout()
-        location_form.setSpacing(10)
+        location_form.setSpacing(8)
+        location_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
         location_layout.addLayout(location_form)
         
         self.timezone = QLineEdit("America/Phoenix")
-        self.timezone.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                background: #f9f9f9;
-            }
-        """)
+        self.timezone.setStyleSheet(KDE_STYLES['input'])
         location_form.addRow("Timezone:", self.timezone)
         
         self.latitude = QDoubleSpinBox()
         self.latitude.setRange(-90, 90)
         self.latitude.setValue(33.4484)
         self.latitude.setDecimals(4)
-        self.latitude.setStyleSheet("""
-            QDoubleSpinBox {
-                padding: 8px;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                background: #f9f9f9;
-            }
-        """)
+        self.latitude.setStyleSheet(KDE_STYLES['input'])
         location_form.addRow("Latitude:", self.latitude)
         
         self.longitude = QDoubleSpinBox()
         self.longitude.setRange(-180, 180)
         self.longitude.setValue(-112.074)
         self.longitude.setDecimals(4)
-        self.longitude.setStyleSheet("""
-            QDoubleSpinBox {
-                padding: 8px;
-                border: 1px solid #d0d0d0;
-                border-radius: 4px;
-                background: #f9f9f9;
-            }
-        """)
+        self.longitude.setStyleSheet(KDE_STYLES['input'])
         location_form.addRow("Longitude:", self.longitude)
         
         layout.addWidget(location_card)
         
+        # Save Button
         self.save_button = QPushButton("Save Settings")
         self.save_button.clicked.connect(self._save_settings)
-        self.save_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0088cc;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #006699;
-            }
-            QPushButton:pressed {
-                background-color: #005577;
-            }
-        """)
+        self.save_button.setStyleSheet(KDE_STYLES['button_primary'])
         layout.addWidget(self.save_button)
         
         layout.addStretch()
@@ -555,7 +645,7 @@ class ImageCrossFadeWidget(QWidget):
 
 
 class ThemesTab(QWidget):
-    """Themes tab showing all imported themes."""
+    """Themes tab showing all imported themes - KDE 6 Plasma design."""
     
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
@@ -564,7 +654,8 @@ class ThemesTab(QWidget):
         
     def _init_ui(self):
         layout = QHBoxLayout()
-        layout.setSpacing(15)
+        layout.setSpacing(16)
+        layout.setContentsMargins(16, 16, 16, 16)
         self.setLayout(layout)
         
         # Left column - theme list (30% width)
@@ -572,26 +663,47 @@ class ThemesTab(QWidget):
         left_layout = QVBoxLayout()
         left_panel.setLayout(left_layout)
         
+        # Header
+        header = QLabel("Themes")
+        header.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        header.setStyleSheet(KDE_STYLES['label_title'])
+        left_layout.addWidget(header)
+        
+        header_desc = QLabel("Select a theme to preview")
+        header_desc.setFont(QFont("Noto Sans", 11))
+        header_desc.setStyleSheet(KDE_STYLES['label_subtitle'])
+        left_layout.addWidget(header_desc)
+        
         self.theme_list = ThemeListWidget()
         self.theme_list.theme_selected.connect(self._on_theme_selected)
         self.theme_list.itemSelectionChanged.connect(self._on_selection_changed)
-        left_layout.addWidget(self.theme_list)
-        
-        # Import button at bottom
-        self.import_button = QPushButton("Import Theme File")
-        self.import_button.clicked.connect(self._import_theme)
-        self.import_button.setStyleSheet("""
-            QPushButton {
-                background-color: #0088cc;
-                color: white;
-                border: none;
-                padding: 10px 20px;
+        self.theme_list.setStyleSheet("""
+            QListWidget {
+                background-color: #ffffff;
+                border: 1px solid #d3d6d9;
                 border-radius: 6px;
+                padding: 8px;
+                outline: none;
             }
-            QPushButton:hover {
-                background-color: #006699;
+            QListWidget::item {
+                padding: 8px 12px;
+                border-radius: 4px;
+                margin-bottom: 2px;
+            }
+            QListWidget::item:hover {
+                background-color: #e0e3e6;
+            }
+            QListWidget::item:selected {
+                background-color: #0082FC;
+                color: white;
             }
         """)
+        left_layout.addWidget(self.theme_list)
+        
+        # Import button
+        self.import_button = QPushButton("Import Theme File")
+        self.import_button.clicked.connect(self._import_theme)
+        self.import_button.setStyleSheet(KDE_STYLES['button_secondary'])
         left_layout.addWidget(self.import_button)
         
         left_panel.setFixedWidth(300)
@@ -599,6 +711,7 @@ class ThemesTab(QWidget):
         
         # Right panel - preview (70% width)
         self.preview_widget = ImageCrossFadeWidget()
+        self.preview_widget.setStyleSheet("background-color: #eff0f1;")
         layout.addWidget(self.preview_widget)
         
         # Load themes
@@ -717,7 +830,7 @@ class ThemesTab(QWidget):
         return None
 
 class SchedulerTab(QWidget):
-    """Scheduler tab with start/stop controls and event log."""
+    """Scheduler tab with start/stop controls and event log - KDE 6 Plasma design."""
     
     def __init__(self, config_path: Optional[str] = None, parent=None):
         super().__init__(parent)
@@ -728,98 +841,76 @@ class SchedulerTab(QWidget):
         
     def _init_ui(self):
         layout = QVBoxLayout()
-        layout.setSpacing(15)
+        layout.setSpacing(16)
+        layout.setContentsMargins(16, 16, 16, 16)
         self.setLayout(layout)
         
+        # Status Card
         status_card = ModernCard()
         status_layout = QVBoxLayout()
+        status_layout.setSpacing(12)
         status_card.setLayout(status_layout)
         
         status_title = QLabel("Scheduler Status")
-        status_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        status_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        status_title.setStyleSheet(KDE_STYLES['label_title'])
         status_layout.addWidget(status_title)
         
         self.status_label = QLabel("Scheduler: Stopped")
-        self.status_label.setFont(QFont("Arial", 12))
+        self.status_label.setFont(QFont("Noto Sans", 12))
         self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setStyleSheet("""
             QLabel {
-                padding: 15px;
+                padding: 20px;
                 background-color: #e8f4fc;
                 border-radius: 6px;
-                color: #0088cc;
+                color: #0082FC;
             }
         """)
         status_layout.addWidget(self.status_label)
         
         layout.addWidget(status_card)
         
+        # Button Layout
         button_layout = QHBoxLayout()
-        button_layout.setSpacing(15)
+        button_layout.setSpacing(16)
         
         self.start_button = QPushButton("▶ Start Scheduler")
         self.start_button.clicked.connect(self._start_scheduler)
-        self.start_button.setFont(QFont("Arial", 11))
-        self.start_button.setStyleSheet("""
-            QPushButton {
-                background-color: #28a745;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #218838;
-            }
-            QPushButton:pressed {
-                background-color: #1e7e34;
-            }
-        """)
+        self.start_button.setFont(QFont("Noto Sans", 11))
+        self.start_button.setStyleSheet(KDE_STYLES['button_primary'])
         button_layout.addWidget(self.start_button)
         
         self.stop_button = QPushButton("⏹ Stop Scheduler")
         self.stop_button.clicked.connect(self._stop_scheduler)
-        self.stop_button.setFont(QFont("Arial", 11))
+        self.stop_button.setFont(QFont("Noto Sans", 11))
         self.stop_button.setEnabled(False)
-        self.stop_button.setStyleSheet("""
-            QPushButton {
-                background-color: #dc3545;
-                color: white;
-                border: none;
-                padding: 12px 24px;
-                border-radius: 8px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #c82333;
-            }
-            QPushButton:disabled {
-                background-color: #cccccc;
-            }
-        """)
+        self.stop_button.setStyleSheet(KDE_STYLES['button_secondary'])
         button_layout.addWidget(self.stop_button)
         
         layout.addLayout(button_layout)
         
+        # Log Card
         log_card = ModernCard()
         log_layout = QVBoxLayout()
+        log_layout.setSpacing(12)
         log_card.setLayout(log_layout)
         
         log_title = QLabel("Event Log")
-        log_title.setFont(QFont("Arial", 11, QFont.Weight.Bold))
+        log_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        log_title.setStyleSheet(KDE_STYLES['label_title'])
         log_layout.addWidget(log_title)
         
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
-        self.log_area.setFont(QFont("Courier", 9))
+        self.log_area.setFont(QFont("Noto Sans Mono", 10))
         self.log_area.setStyleSheet("""
             QTextEdit {
-                background-color: #1e1e1e;
-                color: #00ff00;
-                border: 1px solid #d0d0d0;
+                background-color: #eff0f1;
+                color: #31363b;
+                border: 1px solid #d3d6d9;
                 border-radius: 6px;
-                padding: 10px;
+                padding: 12px;
                 min-height: 150px;
             }
         """)
@@ -888,7 +979,7 @@ class SchedulerTab(QWidget):
 
 
 class WallpaperGUI(QMainWindow):
-    """Main GUI window for KDE Wallpaper Changer."""
+    """Main GUI window for KDE Wallpaper Changer - KDE 6 Plasma design."""
     
     def __init__(self, config_path: Optional[str] = None):
         super().__init__()
@@ -906,44 +997,18 @@ class WallpaperGUI(QMainWindow):
         self.setCentralWidget(central)
         
         main_layout = QVBoxLayout()
-        main_layout.setSpacing(15)
+        main_layout.setSpacing(16)
+        main_layout.setContentsMargins(16, 16, 16, 16)
         central.setLayout(main_layout)
         
         title = QLabel("KDE Wallpaper Changer")
-        title.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+        title.setFont(QFont("Noto Sans", 18, QFont.Weight.Bold))
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("""
-            QLabel {
-                color: #0088cc;
-                padding: 15px;
-            }
-        """)
+        title.setStyleSheet(KDE_STYLES['label_title'])
         main_layout.addWidget(title)
         
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #d0d0d0;
-                border-radius: 8px;
-                background: #f9f9f9;
-            }
-            QTabBar::tab {
-                background-color: #e0e0e0;
-                color: #333;
-                padding: 10px 20px;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-            }
-            QTabBar::tab:selected {
-                background-color: #0088cc;
-                color: white;
-            }
-            QTabBar::tab:hover {
-                background-color: #006699;
-                color: white;
-            }
-        """)
+        self.tabs.setStyleSheet(KDE_STYLES['tab_widget'])
         main_layout.addWidget(self.tabs)
         
         # Tab order: Themes, Settings, Scheduler
