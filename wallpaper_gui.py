@@ -288,10 +288,14 @@ class SystemTrayIcon(QSystemTrayIcon):
         
     def _open_app(self):
         """Open the main application window."""
-        if self.parent() and hasattr(self.parent(), 'show'):
-            self.parent().show()
-            self.parent().raise_()
-            self.parent().activateWindow()
+        # Find the main window by traversing up the parent hierarchy
+        parent = self.parent()
+        while parent and not hasattr(parent, 'show'):
+            parent = parent.parent()
+        if parent and hasattr(parent, 'show'):
+            parent.show()
+            parent.raise_()
+            parent.activateWindow()
 
 
 class SettingsTab(QWidget):
@@ -1306,6 +1310,9 @@ def main():
     if not _acquire_single_instance_lock():
         # Another instance is running - show it and exit
         _show_existing_instance()
+        # Give time for the signal to be processed
+        import time
+        time.sleep(0.1)
         sys.exit(0)
     
     palette = app.palette()
