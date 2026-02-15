@@ -520,12 +520,16 @@ class ImageCrossFadeWidget(QWidget):
         self._animation.setEasingCurve(QEasingCurve.Type.Linear)
         self._animation.finished.connect(self._on_animation_finished)
         
-        # Auto-advance timer
+        # Auto-advance timer - will be controlled by tab visibility
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._advance_image)
-        self._timer.start(3000)  # Change every 3 seconds
+        self._timer.setSingleShot(False)
         
         self.setMinimumSize(800, 450)
+        
+        # Store parent tab widget for visibility tracking
+        self._parent_tab = None
+        self._is_visible = False  # Start as not visible
         
     @pyqtProperty(float)
     def blend(self) -> float:
@@ -560,6 +564,17 @@ class ImageCrossFadeWidget(QWidget):
             
         if index in self._pixmap_cache:
             return
+            
+        # Clear old cache entries to limit memory usage
+        # Only keep current and next image in cache
+        current_index = self._current_image_index
+        next_index = (current_index + 1) % len(self._images)
+        
+        # Clear all entries except current and next
+        keys_to_keep = {current_index, next_index}
+        keys_to_remove = [k for k in self._pixmap_cache if k not in keys_to_keep]
+        for k in keys_to_remove:
+            del self._pixmap_cache[k]
             
         image_path = self._images[index]
         pixmap = QPixmap(image_path)
@@ -650,6 +665,17 @@ class ImageCrossFadeWidget(QWidget):
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation
         )
+        
+    def set_visible(self, visible: bool):
+        """Control timer based on visibility."""
+        if visible:
+            self._timer.start(3000)
+            self._is_visible = True
+        else:
+            self._timer.stop()
+            self._is_visible = False
+            # Clear pixmap cache when not visible to free memory
+            self._pixmap_cache.clear()
 
 
 class ThemesTab(QWidget):
@@ -722,6 +748,26 @@ class ThemesTab(QWidget):
         self.preview_widget.setStyleSheet("background-color: #eff0f1;")
         layout.addWidget(self.preview_widget)
         
+        # Track tab visibility to control preview timer
+        # Store reference to check later when tab widget is fully set up
+        self._pending_tab_check = True
+        
+    def _check_initial_tab_visibility(self):
+        """Check if this tab is visible and start timer if so."""
+        if not self._pending_tab_check:
+            return
+        self._pending_tab_check = False
+        
+        parent_tab_widget = self.parentWidget()
+        if parent_tab_widget and hasattr(parent_tab_widget, 'currentChanged'):
+            parent_tab_widget.currentChanged.connect(self._on_tab_changed)
+            # Check if this tab is initially visible
+            current_index = parent_tab_widget.currentIndex()
+            for i in range(parent_tab_widget.count()):
+                if parent_tab_widget.widget(i) is self:
+                    self.preview_widget.set_visible(i == current_index)
+                    break
+        
         # Load themes
         self.theme_list.load_themes()
         
@@ -734,6 +780,21 @@ class ThemesTab(QWidget):
                 theme_path = current_item.data(Qt.ItemDataRole.UserRole)
                 images = self._load_theme_images(theme_path)
                 self.preview_widget.set_images(images)
+        
+    def _on_tab_changed(self, index: int):
+        """Handle tab change to control preview timer based on visibility."""
+        parent_tab_widget = self.parentWidget()
+        if not parent_tab_widget or not hasattr(parent_tab_widget, 'currentIndex'):
+            return
+        
+        current_index = parent_tab_widget.currentIndex()
+        # Find which tab index this ThemesTab is at
+        if hasattr(parent_tab_widget, 'count'):
+            for i in range(parent_tab_widget.count()):
+                if parent_tab_widget.widget(i) is self:
+                    # This is the ThemesTab
+                    self.preview_widget.set_visible(i == current_index)
+                    break
         
     def _on_selection_changed(self):
         """Handle theme selection change."""
@@ -1022,6 +1083,8 @@ class WallpaperGUI(QMainWindow):
         # Tab order: Themes, Settings, Scheduler
         self.themes_tab = ThemesTab(self.config_path)
         self.tabs.addTab(self.themes_tab, "🎨 Themes")
+        # Check initial tab visibility after adding to tab widget
+        self.themes_tab._check_initial_tab_visibility()
         
         self.settings_tab = SettingsTab(self.config_path)
         self.tabs.addTab(self.settings_tab, "⚙️ Settings")
