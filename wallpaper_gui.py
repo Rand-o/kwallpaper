@@ -1100,6 +1100,10 @@ class WallpaperGUI(QMainWindow):
         self.scheduler_tab = SchedulerTab(self.config_path)
         self.tabs.addTab(self.scheduler_tab, "⏱ Scheduler")
         
+        # Auto-start scheduler when application opens
+        if self.scheduler_tab.scheduler is not None and not self.scheduler_tab.scheduler.is_running():
+            self.scheduler_tab._start_scheduler()
+        
     def closeEvent(self, event):
         if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
             if self.scheduler_tab.scheduler.is_running():
