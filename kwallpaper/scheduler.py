@@ -47,23 +47,19 @@ class SchedulerManager:
             config = load_config(self.config_path)
             scheduling = config.get('scheduling', {
                 'interval': 60,
-                'daily_change_time': '00:00',
-                'run_cycle': True,
-                'run_daily_change': True
+                'daily_shuffle_enabled': True
             })
             return {
                 'interval': scheduling.get('interval', 60),
-                'daily_change_time': scheduling.get('daily_change_time', '00:00'),
-                'run_cycle': scheduling.get('run_cycle', True),
-                'run_daily_change': scheduling.get('run_daily_change', True)
+                'daily_shuffle_enabled': scheduling.get('daily_shuffle_enabled', True),
+                'run_cycle': scheduling.get('run_cycle', True)
             }
         except Exception as e:
             logger.warning(f"Failed to load config: {e}. Using defaults.")
             return {
                 'interval': 60,
-                'daily_change_time': '00:00',
-                'run_cycle': True,
-                'run_daily_change': True
+                'daily_shuffle_enabled': True,
+                'run_cycle': True
             }
     
     def _run_cycle_task(self) -> None:
@@ -123,24 +119,17 @@ class SchedulerManager:
                 self._tasks['cycle'] = {'interval': interval, 'type': 'interval'}
                 logger.info(f"Added cycle task: runs every {interval} seconds")
             
-            if config.get('run_daily_change', True):
-                daily_time = config.get('daily_change_time', '00:00')
-                try:
-                    hour, minute = map(int, daily_time.split(':'))
-                    cron_trigger = CronTrigger(hour=hour, minute=minute)
-                except (ValueError, IndexError):
-                    logger.warning(f"Invalid daily_change_time format: {daily_time}. Using 00:00.")
-                    cron_trigger = CronTrigger(hour=0, minute=0)
-                
+            # Add change task for daily shuffle logic if enabled
+            if config.get('daily_shuffle_enabled', True):
                 self.scheduler.add_job(
                     self._run_change_task,
-                    trigger=cron_trigger,
+                    trigger=IntervalTrigger(seconds=interval),
                     id='change_task',
-                    name='Daily Change Task',
+                    name='Change Wallpaper Task',
                     replace_existing=True
                 )
-                self._tasks['daily_change'] = {'time': daily_time, 'type': 'cron'}
-                logger.info(f"Added daily change task: runs at {daily_time}")
+                self._tasks['change'] = {'interval': interval, 'type': 'interval'}
+                logger.info(f"Added change task: runs every {interval} seconds")
             
             self.scheduler.start()
             self._is_running = True

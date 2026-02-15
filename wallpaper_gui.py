@@ -226,20 +226,15 @@ class SettingsTab(QWidget):
         self.cycle_interval.setStyleSheet(KDE_STYLES['input'])
         scheduler_form.addRow("Cycle Interval:", self.cycle_interval)
         
-        self.daily_change_time = QLineEdit("00:00")
-        self.daily_change_time.setPlaceholderText("HH:MM")
-        self.daily_change_time.setStyleSheet(KDE_STYLES['input'])
-        scheduler_form.addRow("Daily Change Time:", self.daily_change_time)
+        self.daily_shuffle_enabled = QCheckBox("Enable daily theme shuffle")
+        self.daily_shuffle_enabled.setChecked(True)
+        self.daily_shuffle_enabled.setStyleSheet(KDE_STYLES['checkbox'])
+        scheduler_inner_layout.addWidget(self.daily_shuffle_enabled)
         
         self.run_cycle = QCheckBox("Enable cycle task (runs every interval)")
         self.run_cycle.setChecked(True)
         self.run_cycle.setStyleSheet(KDE_STYLES['checkbox'])
         scheduler_inner_layout.addWidget(self.run_cycle)
-        
-        self.run_daily = QCheckBox("Enable daily change task (runs at specified time)")
-        self.run_daily.setChecked(True)
-        self.run_daily.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_inner_layout.addWidget(self.run_daily)
         
         left_layout.addWidget(scheduler_card)
         
@@ -302,9 +297,8 @@ class SettingsTab(QWidget):
             config = load_config(self.config_path)
             scheduling = config.get('scheduling', {})
             self.cycle_interval.setValue(scheduling.get('interval', 60))
-            self.daily_change_time.setText(scheduling.get('daily_change_time', '00:00'))
+            self.daily_shuffle_enabled.setChecked(scheduling.get('daily_shuffle_enabled', True))
             self.run_cycle.setChecked(scheduling.get('run_cycle', True))
-            self.run_daily.setChecked(scheduling.get('run_daily_change', True))
             
             location = config.get('location', {})
             self.timezone.setText(location.get('timezone', 'America/Phoenix'))
@@ -320,9 +314,8 @@ class SettingsTab(QWidget):
             
             config['scheduling'] = {
                 'interval': self.cycle_interval.value(),
-                'daily_change_time': self.daily_change_time.text(),
-                'run_cycle': self.run_cycle.isChecked(),
-                'run_daily_change': self.run_daily.isChecked()
+                'daily_shuffle_enabled': self.daily_shuffle_enabled.isChecked(),
+                'run_cycle': self.run_cycle.isChecked()
             }
             
             config['location'] = {
@@ -964,7 +957,7 @@ class SchedulerTab(QWidget):
             self.stop_button.setEnabled(True)
             self.log_area.append("Scheduler started successfully")
             self.log_area.append("Cycle task: Every 60 seconds")
-            self.log_area.append("Daily change task: At 00:00")
+            self.log_area.append("Daily shuffle: Enabled")
         else:
             self.log_area.append("Failed to start scheduler")
             

@@ -259,9 +259,7 @@ DEFAULT_CONFIG = {
     "retry_delay": 5,
     "scheduling": {
         "interval": 60,
-        "daily_change_time": "00:00",
-        "run_cycle": True,
-        "run_daily_change": True
+        "daily_shuffle_enabled": True
     }
 }
 
@@ -351,9 +349,9 @@ def validate_config(config: Dict[str, Any]) -> None:
         if 'run_cycle' in scheduling:
             if not isinstance(scheduling['run_cycle'], bool):
                 raise ValueError("Config validation failed: 'scheduling.run_cycle' must be a boolean")
-        if 'run_daily_change' in scheduling:
-            if not isinstance(scheduling['run_daily_change'], bool):
-                raise ValueError("Config validation failed: 'scheduling.run_daily_change' must be a boolean")
+        if 'daily_shuffle_enabled' in scheduling:
+            if not isinstance(scheduling['daily_shuffle_enabled'], bool):
+                raise ValueError("Config validation failed: 'scheduling.daily_shuffle_enabled' must be a boolean")
 
 
 # ============================================================================
@@ -1630,10 +1628,20 @@ def change_wallpaper(image_path: str) -> bool:
         )
 
         if result.returncode == 0:
-           print("Wallpaper changed successfully!")
-           return True
+           verify_result = subprocess.run([
+              'kreadconfig5',
+              '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
+              '--group', 'Wallpaper',
+              '--group', 'org.kde.image',
+              '--key', 'Image'
+           ], capture_output=True, text=True)
+           
+           if verify_result.returncode == 0 and verify_result.stdout.strip() == image_path:
+              print("Wallpaper changed successfully!")
+              return True
+           
+           print("plasma-apply-wallpaperimage returned success but wallpaper not updated, using fallback...", file=sys.stderr)
 
-        # Fall back to kwriteconfig5 if plasma-apply-wallpaperimage fails
         print("Attempting fallback method using kwriteconfig5...", file=sys.stderr)
         subprocess.run([
            'kwriteconfig5',
@@ -1770,10 +1778,16 @@ def run_change_command(args) -> int:
         from kwallpaper.shuffle_list_manager import (
             create_initial_shuffle, get_next_theme,
             check_and_reshuffle, save_shuffle_list, load_shuffle_list,
-            get_current_date
+            get_current_date, check_day_passed, save_theme_change_date,
+            load_theme_change_date
         )
         # Import discover_themes from wallpaper_changer
-        from kwallpaper.wallpaper_changer import discover_themes
+        from kwallpaper.wallpaper_changer import discover_themes, load_config, DEFAULT_CONFIG_PATH
+        
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
         
         # Check if manual theme path override is provided
         if args.theme_path:
@@ -1811,16 +1825,19 @@ def run_change_command(args) -> int:
                 shuffle_list = create_initial_shuffle(theme_paths)
                 current_index = 0
             
-            # Get next theme from shuffle list
-            if current_index >= len(shuffle_list):
-                # Restart from beginning if we've gone through all themes
-                current_index = 0
+            # Check if a day has passed since last theme change
+            last_change_date = load_theme_change_date()
+            current_date = get_current_date(timezone_str)
+            day_changed = check_day_passed(last_change_date, current_date)
+            if day_changed:
+                print("New day detected - advancing to next theme")
+                current_index = (current_index + 1) % len(shuffle_list) if shuffle_list else 0
+                save_theme_change_date(current_date)
             
             theme_path = shuffle_list[current_index]
-            current_index += 1
             
             # Save shuffle state
-            save_shuffle_list(shuffle_list, current_index, get_current_date())
+            save_shuffle_list(shuffle_list, current_index, get_current_date(timezone_str))
             
             print(f"Selected theme: {Path(theme_path).name}")
 
@@ -2277,6 +2294,12 @@ def run_shuffle_list_command(args) -> int:
     """
     try:
         from kwallpaper.shuffle_list_manager import load_shuffle_list, get_current_date
+        from kwallpaper.wallpaper_changer import load_config, DEFAULT_CONFIG_PATH
+        
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
         
         # Load shuffle list state
         shuffle_state = load_shuffle_list()
@@ -2327,7 +2350,7 @@ def run_shuffle_list_command(args) -> int:
             print(f"    {i+1}. {theme_name}{marker}")
         
         # Check if reshuffle is needed
-        current_date = get_current_date()
+        current_date = get_current_date(timezone_str)
         if last_used_date != current_date:
             print()
             print("  Note: Reshuffle needed (date changed)")
@@ -2520,6 +2543,13 @@ def run_themes_reshuffle(args) -> int:
             check_and_reshuffle, save_shuffle_list, load_shuffle_list,
             get_current_date
         )
+        from kwallpaper.wallpaper_changer import load_config, DEFAULT_CONFIG_PATH
+        
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
+        
         # Import discover_themes from wallpaper_changer
         
         themes = discover_themes()
@@ -2531,7 +2561,7 @@ def run_themes_reshuffle(args) -> int:
         theme_paths = [path for _, path in themes]
         shuffle_list = create_initial_shuffle(theme_paths)
         
-        save_shuffle_list(shuffle_list, 0, get_current_date())
+        save_shuffle_list(shuffle_list, 0, get_current_date(timezone_str))
         
         print("Themes reshuffled successfully!")
         print(f"Total themes: {len(shuffle_list)}")
