@@ -6,6 +6,7 @@ KDE Wallpaper Changer - GUI Application with Scheduling
 import sys
 import logging
 import json
+import socket
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -31,6 +32,38 @@ from kwallpaper.wallpaper_changer import (
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Global reference to the main window for single instance
+_main_window = None
+
+# Single instance lock - uses socket to prevent multiple instances
+_instance_lock = None
+
+
+def _acquire_single_instance_lock():
+    """Acquire a lock to prevent multiple instances. Returns True if lock acquired."""
+    global _instance_lock
+    try:
+        # Create a socket and bind to a local port
+        _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        _instance_lock.bind(('127.0.0.1', 28765))  # Random port for single instance
+        _instance_lock.listen(1)
+        return True
+    except OSError:
+        # Port is already in use, another instance is running
+        return False
+
+
+def _show_existing_instance():
+    """Show the existing window instance."""
+    global _main_window
+    if _main_window is not None:
+        _main_window.show()
+        _main_window.raise_()
+        _main_window.activateWindow()
+        return True
+    return False
+
 
 # KDE 6 Plasma Design System
 KDE_COLORS = {
@@ -1140,6 +1173,9 @@ class WallpaperGUI(QMainWindow):
     def __init__(self, config_path: Optional[str] = None):
         super().__init__()
         self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
+        # Set global reference for single instance
+        global _main_window
+        _main_window = self
         self._init_ui()
         
     def _init_ui(self):
@@ -1230,6 +1266,12 @@ def main():
     # Prevent app from quitting when window is closed (tray icon should keep it running)
     app.setQuitOnLastWindowClosed(False)
     
+    # Try to acquire single instance lock
+    if not _acquire_single_instance_lock():
+        # Another instance is running - show it and exit
+        _show_existing_instance()
+        sys.exit(0)
+    
     palette = app.palette()
     palette.setColor(palette.ColorRole.Window, QColor("#f0f0f0"))
     palette.setColor(palette.ColorRole.WindowText, QColor("#333333"))
@@ -1246,8 +1288,17 @@ def main():
     palette.setColor(palette.ColorRole.HighlightedText, QColor("#ffffff"))
     app.setPalette(palette)
     
-    window = WallpaperGUI(config_path=args.config)
-    window.show()
+    # Check if a window already exists (single instance)
+    global _main_window
+    if _main_window is not None:
+        # Window exists - show it instead of creating a new one
+        _main_window.show()
+        _main_window.raise_()
+        _main_window.activateWindow()
+    else:
+        # Create new window
+        window = WallpaperGUI(config_path=args.config)
+        window.show()
     
     sys.exit(app.exec())
 
