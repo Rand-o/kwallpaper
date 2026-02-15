@@ -239,10 +239,13 @@ class SystemTrayIcon(QSystemTrayIcon):
         self.activated.connect(self._on_activated)
         
     def _create_icon(self) -> QIcon:
-        """Create a white window pane icon for the system tray."""
-        # Create a simple window icon using SVG
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
-            <path d="M2 4h20v16H2V4zm2 2v12h16V6H4zm2 2h12v2H6V6zm0 4h12v2H6v-2zm0 4h12v2H6v-2z"/>
+        """Create a window icon with 4 panes for the system tray."""
+        # Create a window icon with 4 panes - rectangular shape
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 48" fill="#31363b">
+            <rect x="2" y="4" width="28" height="40" rx="2" fill="#ffffff" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="2" y1="20" x2="30" y2="20" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="16" y1="4" x2="16" y2="20" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="16" y1="24" x2="16" y2="44" stroke="#d3d6d9" stroke-width="1"/>
         </svg>'''
         pixmap = QPixmap()
         pixmap.loadFromData(svg.encode('utf-8'))
