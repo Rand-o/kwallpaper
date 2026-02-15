@@ -1227,6 +1227,8 @@ def main():
     args = parser.parse_args()
     
     app = QApplication(sys.argv)
+    # Prevent app from quitting when window is closed (tray icon should keep it running)
+    app.setQuitOnLastWindowClosed(False)
     
     palette = app.palette()
     palette.setColor(palette.ColorRole.Window, QColor("#f0f0f0"))
