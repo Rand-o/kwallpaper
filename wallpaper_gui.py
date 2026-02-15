@@ -793,7 +793,15 @@ class ThemesTab(QWidget):
             for i in range(parent_tab_widget.count()):
                 if parent_tab_widget.widget(i) is self:
                     # This is the ThemesTab
-                    self.preview_widget.set_visible(i == current_index)
+                    is_visible = i == current_index
+                    self.preview_widget.set_visible(is_visible)
+                    # If tab became visible, refresh the preview for current selection
+                    if is_visible:
+                        current_item = self.theme_list.currentItem()
+                        if current_item:
+                            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
+                            images = self._load_theme_images(theme_path)
+                            self.preview_widget.set_images(images)
                     break
         
     def _on_selection_changed(self):
