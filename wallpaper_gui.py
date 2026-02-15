@@ -15,10 +15,11 @@ try:
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
         QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QFrame,
-        QScrollArea, QFileDialog, QListWidget, QListWidgetItem
+        QScrollArea, QFileDialog, QListWidget, QListWidgetItem,
+        QSystemTrayIcon, QMenu
     )
     from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QRectF
-    from PyQt6.QtGui import QFont, QPixmap, QColor, QPainter, QPen
+    from PyQt6.QtGui import QFont, QPixmap, QColor, QPainter, QPen, QIcon, QAction
     PYQT6_AVAILABLE = True
 except ImportError:
     PYQT6_AVAILABLE = False
@@ -181,6 +182,72 @@ class ModernCard(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setFrameShadow(QFrame.Shadow.Raised)
         self.setStyleSheet(KDE_STYLES['card'])
+
+
+class SystemTrayIcon(QSystemTrayIcon):
+    """System tray icon with scheduler controls."""
+    
+    def __init__(self, scheduler_tab, parent=None):
+        super().__init__(parent)
+        self.scheduler_tab = scheduler_tab
+        self.setIcon(self._create_icon())
+        self.setVisible(True)
+        self.activated.connect(self._on_activated)
+        
+    def _create_icon(self) -> QIcon:
+        """Create a white window pane icon for the system tray."""
+        # Create a simple window icon using SVG
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+            <path d="M2 4h20v16H2V4zm2 2v12h16V6H4zm2 2h12v2H6V6zm0 4h12v2H6v-2zm0 4h12v2H6v-2z"/>
+        </svg>'''
+        pixmap = QPixmap()
+        pixmap.loadFromData(svg.encode('utf-8'))
+        return QIcon(pixmap)
+        
+    def _on_activated(self, reason):
+        """Handle tray icon activation."""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._open_app()
+        
+    def update_menu(self):
+        """Update tray menu based on scheduler status."""
+        menu = QMenu()
+        
+        # Scheduler status
+        status = "Running" if self.scheduler_tab.scheduler.is_running() else "Stopped"
+        status_action = menu.addAction(f"Status: {status}")
+        status_action.setEnabled(False)
+        
+        menu.addSeparator()
+        
+        # Start scheduler
+        if not self.scheduler_tab.scheduler.is_running():
+            start_action = menu.addAction("Start Scheduler")
+            start_action.triggered.connect(self.scheduler_tab._start_scheduler)
+        
+        # Stop scheduler
+        if self.scheduler_tab.scheduler.is_running():
+            stop_action = menu.addAction("Stop Scheduler")
+            stop_action.triggered.connect(self.scheduler_tab._stop_scheduler)
+        
+        menu.addSeparator()
+        
+        # Open app window
+        open_action = menu.addAction("Open App")
+        open_action.triggered.connect(self._open_app)
+        
+        # Quit
+        quit_action = menu.addAction("Quit")
+        quit_action.triggered.connect(QApplication.quit)
+        
+        self.setContextMenu(menu)
+        
+    def _open_app(self):
+        """Open the main application window."""
+        if self.parent() and hasattr(self.parent(), 'show'):
+            self.parent().show()
+            self.parent().raise_()
+            self.parent().activateWindow()
 
 
 class SettingsTab(QWidget):
@@ -1104,7 +1171,24 @@ class WallpaperGUI(QMainWindow):
         if self.scheduler_tab.scheduler is not None and not self.scheduler_tab.scheduler.is_running():
             self.scheduler_tab._start_scheduler()
         
+        # Initialize system tray icon
+        self.tray_icon = SystemTrayIcon(self.scheduler_tab, self)
+        self.tray_icon.update_menu()
+        
     def closeEvent(self, event):
+        """Handle window close event - hide to tray instead of quitting."""
+        # Only hide if system tray is available
+        if self.tray_icon and self.tray_icon.isSystemTrayAvailable():
+            self.hide()
+            event.ignore()
+        else:
+            # No system tray - shutdown scheduler and quit
+            if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
+                if self.scheduler_tab.scheduler.is_running():
+                    self.scheduler_tab.log_area.append("Shutting down scheduler...")
+                    self.scheduler_tab.scheduler.stop(wait=True)
+                    self.scheduler_tab.log_area.append("Scheduler shutdown complete")
+            event.accept()
         if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
             if self.scheduler_tab.scheduler.is_running():
                 self.scheduler_tab.log_area.append("Shutting down scheduler...")
