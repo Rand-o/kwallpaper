@@ -55,14 +55,25 @@ def _acquire_single_instance_lock():
 
 
 def _show_existing_instance():
-    """Show the existing window instance."""
+    """Show the existing window instance by sending a signal via socket."""
     global _main_window
+    
+    # First try to show the local window reference
     if _main_window is not None:
         _main_window.show()
         _main_window.raise_()
         _main_window.activateWindow()
         return True
-    return False
+    
+    # If no local reference, try to send signal to existing instance
+    try:
+        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client_socket.connect(('127.0.0.1', 28765))
+        client_socket.send(b'SHOW_WINDOW')
+        client_socket.close()
+        return True
+    except Exception:
+        return False
 
 
 # KDE 6 Plasma Design System
@@ -1222,6 +1233,31 @@ class WallpaperGUI(QMainWindow):
         # Initialize system tray icon
         self.tray_icon = SystemTrayIcon(self.scheduler_tab, self)
         self.tray_icon.update_menu()
+        
+        # Set up socket listener for single instance communication
+        self._socket_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self._socket_listener.setblocking(False)
+        self._socket_listener.listen(1)
+        self._socket_timer = QTimer(self)
+        self._socket_timer.timeout.connect(self._handle_socket_connection)
+        self._socket_timer.start(100)  # Check every 100ms
+        
+    def _handle_socket_connection(self):
+        """Handle incoming socket connections to show the window."""
+        try:
+            self._socket_listener.setblocking(False)
+            conn, addr = self._socket_listener.accept()
+            data = conn.recv(1024)
+            if data == b'SHOW_WINDOW':
+                self.show()
+                self.raise_()
+                self.activateWindow()
+            conn.close()
+        except BlockingIOError:
+            # No connection pending
+            pass
+        except Exception:
+            pass
         
     def closeEvent(self, event):
         """Handle window close event - hide to tray instead of quitting."""
