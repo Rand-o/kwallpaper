@@ -241,11 +241,11 @@ class SystemTrayIcon(QSystemTrayIcon):
     def _create_icon(self) -> QIcon:
         """Create a window icon with 4 panes for the system tray."""
         # Create a window icon with 4 panes - rectangular shape
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 48" fill="#31363b">
-            <rect x="2" y="4" width="28" height="40" rx="2" fill="#ffffff" stroke="#d3d6d9" stroke-width="1"/>
-            <line x1="2" y1="20" x2="30" y2="20" stroke="#d3d6d9" stroke-width="1"/>
-            <line x1="16" y1="4" x2="16" y2="20" stroke="#d3d6d9" stroke-width="1"/>
-            <line x1="16" y1="24" x2="16" y2="44" stroke="#d3d6d9" stroke-width="1"/>
+        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 40" fill="#31363b">
+            <rect x="2" y="4" width="20" height="32" rx="2" fill="#ffffff" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="2" y1="16" x2="22" y2="16" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="12" y1="4" x2="12" y2="16" stroke="#d3d6d9" stroke-width="1"/>
+            <line x1="12" y1="20" x2="12" y2="36" stroke="#d3d6d9" stroke-width="1"/>
         </svg>'''
         pixmap = QPixmap()
         pixmap.loadFromData(svg.encode('utf-8'))
