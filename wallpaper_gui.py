@@ -1094,6 +1094,12 @@ class SchedulerTab(QWidget):
             self.log_area.append("Scheduler started successfully")
             self.log_area.append("Cycle task: Every 60 seconds")
             self.log_area.append("Daily shuffle: Enabled")
+            # Update tray menu by finding main window
+            parent = self.parentWidget()
+            while parent and not hasattr(parent, 'tray_icon'):
+                parent = parent.parentWidget()
+            if parent and hasattr(parent, 'tray_icon'):
+                parent.tray_icon.update_menu()
         else:
             self.log_area.append("Failed to start scheduler")
             
@@ -1118,6 +1124,12 @@ class SchedulerTab(QWidget):
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
             self.log_area.append("Scheduler stopped successfully")
+            # Update tray menu by finding main window
+            parent = self.parentWidget()
+            while parent and not hasattr(parent, 'tray_icon'):
+                parent = parent.parentWidget()
+            if parent and hasattr(parent, 'tray_icon'):
+                parent.tray_icon.update_menu()
         else:
             self.log_area.append("Failed to stop scheduler")
 
