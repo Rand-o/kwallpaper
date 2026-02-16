@@ -14,28 +14,35 @@
     "--filesystem=xdg-cache/wallpaper-changer:rw",
     "--filesystem=xdg-config/wallpaper-changer:rw"
   ],
+  "build-options": {
+    "append-path": "/app/bin",
+    "env": {
+      "PYTHONPATH": "/app/lib/python3.11/site-packages:/app/share/kwallpaper"
+    }
+  },
   "modules": [
     {
       "name": "python-dependencies",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --no-build-isolation astral>=2.2",
-        "pip3 install --no-build-isolation apscheduler>=3.10.0",
-        "pip3 install --no-build-isolation PyQt6>=6.6.0"
+        "pip3 install --no-index --prefix=/app astral>=2.2",
+        "pip3 install --no-index --prefix=/app apscheduler>=3.10.0",
+        "pip3 install --no-index --prefix=/app PyQt6>=6.6.0"
       ]
     },
     {
       "name": "kwallpaper",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --no-build-isolation .",
+        "pip3 install --no-build-isolation --prefix=/app .",
         "install -Dm644 flatpak/org.kde.kwallpaper.desktop /app/share/applications/org.kde.kwallpaper.desktop",
         "install -Dm644 flatpak/org.kde.kwallpaper.metainfo.xml /app/share/metainfo/org.kde.kwallpaper.metainfo.xml"
       ],
       "sources": [
         {
           "type": "dir",
-          "path": "."
+          "path": ".",
+          "dest": "/app/share/kwallpaper"
         }
       ]
     }
