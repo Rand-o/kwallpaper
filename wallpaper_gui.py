@@ -502,6 +502,61 @@ class SettingsTab(QWidget):
         # Re-apply styles to all widgets
         self._reapply_styles_to_widgets(colors)
     
+
+    def _get_tab_widget_style(self, colors: dict) -> str:
+        return f"""
+            QTabWidget::pane {{
+                border: 1px solid {colors['border']};
+                border-radius: 8px;
+                background-color: {colors['panel']};
+            }}
+            QTabBar::tab {{
+                background-color: {colors['panel']};
+                color: {colors['text_primary']};
+                padding: 8px 16px;
+                border: 1px solid {colors['border']};
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 2px;
+            }}
+            QTabBar::tab:hover {{
+                background-color: {colors['background']};
+            }}
+            QTabBar::tab:selected {{
+                background-color: {colors['panel']};
+                color: {colors['accent']};
+                border-bottom: 2px solid {colors['accent']};
+            }}
+        """
+    
+    def _get_scroll_area_style(self, colors: dict) -> str:
+        return f"""
+            QScrollArea {{
+                border: none;
+                background-color: {colors['background']};
+            }}
+            QScrollArea > QWidget > QWidget {{
+                background-color: {colors['background']};
+            }}
+        """
+    
+    def _get_label_title_style(self, colors: dict) -> str:
+        return f"""
+            QLabel {{
+                color: {colors['text_primary']};
+                font-weight: 600;
+                font-size: 14px;
+            }}
+        """
+    
+    def _get_label_subtitle_style(self, colors: dict) -> str:
+        return f"""
+            QLabel {{
+                color: {colors['text_secondary']};
+                font-size: 12px;
+            }}
+        """
     def _reapply_styles_to_widgets(self, colors: dict):
         """Reapply styles to all child widgets."""
         for card in self.findChildren(QFrame):
@@ -608,11 +663,16 @@ class SettingsTab(QWidget):
         """
     
     def _update_all_styles(self, colors: dict):
+        # Update all style dictionaries with actual color values
         KDE_STYLES['card'] = self._get_card_style(colors)
         KDE_STYLES['button_primary'] = self._get_button_primary_style(colors)
         KDE_STYLES['button_secondary'] = self._get_button_secondary_style(colors)
         KDE_STYLES['input'] = self._get_input_style(colors)
         KDE_STYLES['checkbox'] = self._get_checkbox_style(colors)
+        KDE_STYLES['tab_widget'] = self._get_tab_widget_style(colors)
+        KDE_STYLES['scroll_area'] = self._get_scroll_area_style(colors)
+        KDE_STYLES['label_title'] = self._get_label_title_style(colors)
+        KDE_STYLES['label_subtitle'] = self._get_label_subtitle_style(colors)
 
     def _load_config(self):
         try:
