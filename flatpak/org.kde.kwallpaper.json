@@ -1,8 +1,8 @@
 {
   "id": "org.kde.kwallpaper",
   "runtime": "org.kde.Platform",
-  "runtime-version": "6.7",
-  "sdk": "org.kde.Sdk",
+  "runtime-version": "6.9",
+  "sdk": "org.kde.Sdk//6.9",
   "command": "wallpaper-gui",
   "finish-args": [
     "--share=ipc",
@@ -14,20 +14,14 @@
     "--filesystem=xdg-cache/wallpaper-changer:rw",
     "--filesystem=xdg-config/wallpaper-changer:rw"
   ],
-  "build-options": {
-    "append-path": "/app/bin",
-    "env": {
-      "PYTHONPATH": "/app/lib/python3.11/site-packages:/app/share/kwallpaper"
-    }
-  },
   "modules": [
     {
       "name": "python-dependencies",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --no-index --prefix=/app astral>=2.2",
-        "pip3 install --no-index --prefix=/app apscheduler>=3.10.0",
-        "pip3 install --no-index --prefix=/app PyQt6>=6.6.0"
+        "pip3 install --no-build-isolation astral>=2.2",
+        "pip3 install --no-build-isolation apscheduler>=3.10.0",
+        "pip3 install --no-build-isolation PyQt6>=6.6.0"
       ]
     },
     {

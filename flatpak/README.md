@@ -7,11 +7,13 @@ This directory contains the Flatpak configuration for building a single-file bun
 You need `flatpak-builder` installed:
 
 ```bash
-# Fedora/RHEL
 sudo dnf install flatpak-builder
+```
 
-# Ubuntu/Debian
-sudo apt install flatpak-builder
+KDE Platform 6.9 SDK (will be installed automatically if missing):
+
+```bash
+flatpak install org.kde.Sdk//6.9
 ```
 
 ## Building a Single Flatpak File
@@ -35,9 +37,4 @@ flatpak install --user bundle/org.kde.kwallpaper.flatpak
 
 After installation, the app can be launched from the application menu as "KDE Wallpaper Changer".
 
-## Using the Bundle
 
-The `.flatpak` file is a single-file bundle that can be copied to any machine and installed with:
-```bash
-flatpak install --user org.kde.kwallpaper.flatpak
-```
