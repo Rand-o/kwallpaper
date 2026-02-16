@@ -19,16 +19,30 @@
       "name": "python-dependencies",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --no-build-isolation astral>=2.2",
-        "pip3 install --no-build-isolation apscheduler>=3.10.0",
-        "pip3 install --no-build-isolation PyQt6>=6.6.0"
+        "pip3 install /app/deps/astral-3.2-py3-none-any.whl",
+        "pip3 install /app/deps/apscheduler-3.11.2-py3-none-any.whl",
+        "pip3 install /app/deps/pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl"
+      ],
+      "sources": [
+        {
+          "type": "file",
+          "path": "deps/astral-3.2-py3-none-any.whl"
+        },
+        {
+          "type": "file",
+          "path": "deps/apscheduler-3.11.2-py3-none-any.whl"
+        },
+        {
+          "type": "file",
+          "path": "deps/pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl"
+        }
       ]
     },
     {
       "name": "kwallpaper",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --no-build-isolation --prefix=/app .",
+        "pip3 install --prefix=/app .",
         "install -Dm644 flatpak/org.kde.kwallpaper.desktop /app/share/applications/org.kde.kwallpaper.desktop",
         "install -Dm644 flatpak/org.kde.kwallpaper.metainfo.xml /app/share/metainfo/org.kde.kwallpaper.metainfo.xml"
       ],
