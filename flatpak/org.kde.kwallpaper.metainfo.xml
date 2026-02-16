@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>org.kde.kwallpaper</id>
+  <name>KDE Wallpaper Changer</name>
+  <summary>Automatically change KDE Plasma wallpapers based on time-of-day</summary>
+  <description>
+    <p>KDE Wallpaper Changer is a beautiful, native KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files.</p>
+    <p>Features:</p>
+    <ul>
+      <li>Cross-fade image preview widget</li>
+      <li>System tray integration</li>
+      <li>Background scheduler for continuous operation</li>
+      <li>Native KDE Plasma 6 integration with Breeze styling</li>
+      <li>Time-based wallpaper selection using Astral library</li>
+    </ul>
+  </description>
+  <url type="homepage">https://github.com/Rand-o/kwallpaper</url>
+  <url type="bugtracker">https://github.com/Rand-o/kwallpaper/issues</url>
+  <provides>
+    <id>org.kde.wallpaper-changer.desktop</id>
+  </provides>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Rand-o/kwallpaper/main/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1" />
+  <releases>
+    <release version="1.0.0" date="2026-02-16">
+      <description>
+        <p>Initial Flatpak release.</p>
+      </description>
+    </release>
+  </releases>
+  <developer id="com.github.rando">
+    <name>Rand-o</name>
+  </developer>
+</component>

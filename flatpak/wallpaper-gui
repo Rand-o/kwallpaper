@@ -1,0 +1,3 @@
+#!/bin/bash
+cd /app/share/kwallpaper || exit 1
+exec python3 wallpaper_gui.py "$@"

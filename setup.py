@@ -19,9 +19,9 @@ setup(
     description="Automatically change KDE Plasma wallpapers based on time-of-day",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    author="Your Name",
-    author_email="your.email@example.com",
-    url="https://github.com/yourusername/kwallpaper",
+    author="Rand-o",
+    author_email="github@rand-o.com",
+    url="https://github.com/Rand-o/kwallpaper",
     packages=find_packages(),
     classifiers=[
         "Development Status :: 4 - Beta",
@@ -51,11 +51,13 @@ setup(
     entry_points={
         "console_scripts": [
             "wallpaper-changer=kwallpaper.wallpaper_changer:main",
+            "wallpaper-gui=kwallpaper.wallpaper_gui:main",
         ],
     },
-    keywords="kde plasma wallpaper changer time-of-day",
+    keywords="kde plasma wallpaper changer time-of-day flatpak",
     project_urls={
-        "Bug Reports": "https://github.com/yourusername/kwallpaper/issues",
-        "Source": "https://github.com/yourusername/kwallpaper",
+        "Bug Reports": "https://github.com/Rand-o/kwallpaper/issues",
+        "Source": "https://github.com/Rand-o/kwallpaper",
+        "Flatpak": "https://github.com/Rand-o/kwallpaper/blob/main/flatpak/",
     },
 )
