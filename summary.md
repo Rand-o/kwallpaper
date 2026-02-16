@@ -2,7 +2,7 @@
 
 ## Overview
 
-A Python CLI tool for KDE Plasma that automatically changes wallpapers based on time-of-day categories using `.ddw` (KDE wallpaper theme) zip files.
+A beautiful, native KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using `.ddw` (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
 
 **Project URL:** https://github.com/Rand-o/kwallpaper
 
@@ -12,35 +12,44 @@ A Python CLI tool for KDE Plasma that automatically changes wallpapers based on 
 
 ```
 kwallpaper/
-├── __init__.py                  # Package initialization
-├── wallpaper_changer.py         # Core module (848 lines)
-├── requirements.txt             # Python dependencies
-├── setup.py                     # Installation configuration
-├── README.md                    # User documentation
-└── tests/                       # Test suite
-    ├── test_config.py
-    ├── test_config_validation.py
-    ├── test_zip_extraction.py
-    ├── test_image_selection.py
-    ├── test_time_of_day.py
-    ├── test_wallpaper_change.py
-    └── test_cli.py
-
-wallpaper_cli.py                 # CLI entry point (29 lines)
+├── wallpaper_gui.py              # Main GUI application (1069 lines)
+├── wallpaper_cli.py              # CLI wrapper (29 lines)
+├── kwallpaper/
+│   ├── __init__.py               # Package initialization
+│   ├── wallpaper_changer.py      # Core module (848 lines)
+│   ├── scheduler.py              # Background scheduler (243 lines)
+│   └── shuffle_list_manager.py   # Theme shuffling (186 lines)
+├── tests/                        # Test suite
+│   ├── test_config.py
+│   ├── test_config_validation.py
+│   ├── test_zip_extraction.py
+│   ├── test_helper_functions.py
+│   ├── test_wallpaper_change.py
+│   ├── test_full_day_astral.py
+│   └── test_astral_time_detection.py
+├── requirements.txt              # Python dependencies
+└── README.md                     # User documentation
 ```
 
 ### Code Organization
 
-**Two main entry points:**
+**Three main entry points:**
 
-1. **`wallpaper_cli.py`** - Simple CLI wrapper that imports and runs the main function from `kwallpaper/wallpaper_changer.py`
+1. **`wallpaper_gui.py`** - Main GUI application with PyQt6, providing:
+   - Native KDE Plasma 6 integration
+   - Cross-fade image preview widget
+   - System tray with scheduler controls
+   - Multiple tab interface (Themes, Settings, Scheduler)
+   - Single-instance enforcement via socket
 
-2. **`kwallpaper/wallpaper_changer.py`** - Core module containing all functionality:
+2. **`wallpaper_cli.py`** - Simple CLI wrapper that imports and runs the main function from `kwallpaper/wallpaper_changer.py`
+
+3. **`kwallpaper/wallpaper_changer.py`** - Core module containing all background functionality:
    - Configuration management
    - Theme extraction
-   - Image selection
-   - Wallpaper changes
-   - CLI argument parsing
+   - Time-of-day detection using Astral
+   - Image selection algorithms
+   - Wallpaper change commands
 
 ## Core Functionality
 
@@ -50,11 +59,26 @@ wallpaper_cli.py                 # CLI entry point (29 lines)
 
 ```json
 {
-  "interval": 5400,           // Seconds between changes (1.5 hours)
-  "retry_attempts": 3,        // Retry attempts on failure
-  "retry_delay": 5,           // Delay between retries (seconds)
-  "current_image_index": 0,   // Current image in cycling sequence
-  "current_time_of_day": "day" // Current time category
+  "interval": 5400,
+  "retry_attempts": 3,
+  "retry_delay": 5,
+  "scheduling": {
+    "interval": 60,
+    "run_cycle": true,
+    "daily_shuffle_enabled": true
+  },
+  "location": {
+    "city": "Phoenix",
+    "latitude": 33.4484,
+    "longitude": -112.074,
+    "timezone": "America/Phoenix"
+  },
+  "application": {
+    "theme_mode": "system"
+  },
+  "theme": {
+    "last_applied": "theme-name"
+  }
 }
 ```
 
@@ -73,25 +97,13 @@ wallpaper_cli.py                 # CLI entry point (29 lines)
 1. Creates cache directory: `~/.cache/wallpaper-changer/{theme-name}/`
 2. Extracts zip contents to cache directory
 3. Finds and parses theme metadata JSON
-4. Returns extracted directory path and metadata
-
-**Theme metadata structure:**
-```json
-{
-  "displayName": "Tahoe 2026",
-  "imageCredits": "24 Hour Wallpaper",
-  "imageFilename": "24hr-Tahoe-2026_*.jpeg",
-  "sunsetImageList": [10, 11, 12, 13],
-  "sunriseImageList": [2, 3, 4],
-  "dayImageList": [5, 6, 7, 8, 9],
-  "nightImageList": [14, 15, 16, 1]
-}
-```
+4. Normalizes image lists (ensures image 1 in sunrise)
+5. Returns extracted directory path and metadata
 
 **Key functions:**
 - `extract_theme()` - Extracts theme from zip, creates/reuses cache directory
-- Supports both `.zip` and `.ddw` file extensions
-- Searches for JSON files in root or recursively
+- `normalize_image_lists()` - Ensures image 1 is in sunrise, not night
+- `discover_themes()` - Lists all extracted themes
 
 ### 3. Time-of-Day Detection
 
@@ -104,21 +116,32 @@ wallpaper_cli.py                 # CLI entry point (29 lines)
 **Key functions:**
 - `detect_time_of_day(hour)` - Returns category based on hour (uses current time if not provided)
 
+### 3. Time-of-Day Detection
+
+**Categories and time ranges (calculated by Astral):**
+- `night`: From dusk until dawn-30min (last 30 min shows image 1)
+- `sunrise`: From dawn-30min until sunrise+45min
+- `day`: From sunrise+45min until sunset-45min
+- `sunset`: From sunset-45min until dusk
+
+**Key functions:**
+- `detect_time_of_day_sun()` - Returns category using Astral calculations
+- `select_image_for_time()` - Selects image based on position in time period
+
 ### 4. Image Selection
 
 **Selection algorithm:**
-1. Loads current config (image index + time category)
-2. Gets image list for current time-of-day from theme metadata
-3. If category has no images, switches to next category (sunrise → day → sunset → night)
-4. Validates image index (wraps around if exceeds available images)
-5. Finds image file matching pattern:
-   - First tries pattern from `imageFilename` metadata (e.g., `24hr-Tahoe-2026_*.jpeg`)
-   - Falls back to numbered files: `name_1.jpeg`, `name_2.jpeg`, etc.
-6. Updates config with new index and category
+1. Loads config (theme and position data)
+2. Gets time-of-day category using Astral
+3. Gets image list for current category from theme metadata
+4. Calculates position within time period
+5. Selects image index based on position
+6. Finds image file matching pattern
 7. Returns full path to selected image
 
 **Key functions:**
-- `select_next_image(theme_path, config_path)` - Selects and returns image path
+- `select_image_for_time()` - Selects image based on time position
+- `select_image_for_time_cli()` - CLI wrapper with file path handling
 
 ### 5. Wallpaper Change
 
@@ -133,134 +156,35 @@ wallpaper_cli.py                 # CLI entry point (29 lines)
 4. Returns success/failure status
 
 **Key functions:**
-- `change_wallpaper(image_path)` - Changes KDE Plasma wallpaper
+- `change_wallpaper()` - Changes KDE Plasma wallpaper
 - `get_current_wallpaper()` - Retrieves current wallpaper path
 
-## CLI Commands
+### 6. Background Scheduler
 
-### extract
-Extract theme from `.ddw` zip file to cache directory.
+**Based on:** APScheduler library for robust background task management
 
-```bash
-./wallpaper_cli.py extract --theme-path theme.ddw --cleanup
-```
+**Tasks:**
+- Cycle task - Runs at configurable interval
+- Change task - Enables theme shuffling
 
-**Options:**
-- `--theme-path`: Path to zip file
-- `--cleanup`: Remove temp directory after extraction
+**Key functions:**
+- `SchedulerManager` - Manages scheduler lifecycle
+- `create_scheduler()` - Factory function for scheduler creation
 
-### change
-Change wallpaper to next image in current time category.
+### 7. Theme Shuffling
 
-```bash
-./wallpaper_cli.py change --theme-path theme.ddw
-```
+**Purpose:** Rotate between multiple themes automatically
 
-**Options:**
-- `--theme-path`: Path to zip file or extracted directory
-- `--config`: Custom config file path
-- `--monitor`: Continuous mode (cycles wallpapers based on time)
+**Features:**
+- Random shuffle list creation
+- Daily state persistence
+- Automatic reshuffle when list exhausted
 
-### list
-List images for a specific time-of-day category.
-
-```bash
-./wallpaper_cli.py list --theme-path theme --time-of-day day
-```
-
-**Options:**
-- `--theme-path`: Path to theme directory
-- `--time-of-day`: Category (sunrise/day/sunset/night)
-- `--config`: Custom config file path
-
-### status
-Check current wallpaper and configuration.
-
-```bash
-./wallpaper_cli.py status
-```
-
-## Workflow Examples
-
-### Single Wallpaper Change
-```
-1. User runs: ./wallpaper_cli.py change --theme-path theme.ddw
-2. Script extracts theme to ~/.cache/wallpaper-changer/theme-name/
-3. Loads config (current_image_index=0, current_time_of_day="day")
-4. Gets dayImageList = [5, 6, 7, 8, 9]
-5. Selects image at index 0: 24hr-Tahoe-2026_5.jpeg
-6. Changes wallpaper using plasma-apply-wallpaperimage
-7. Updates config: current_image_index=1
-8. Saves config
-```
-
-### Monitor Mode (Continuous)
-```
-1. User runs: ./wallpaper_cli.py change --theme-path theme.ddw --monitor
-2. Loop starts:
-   a. Checks current time
-   b. If time category changed → select new image
-   c. Change wallpaper
-   d. Wait for interval (default 5400 seconds)
-   e. Repeat
-3. User presses Ctrl+C to stop
-```
-
-## Theme Detection Logic
-
-**When changing wallpaper:**
-1. Extracts theme if zip file provided
-2. Searches for JSON metadata file (root or recursive)
-3. Parses theme metadata
-4. Checks config for `current_time_of_day`
-5. Gets image list for that category
-6. If empty, cycles through categories until finding images
-7. Selects image at `current_image_index`
-8. Updates config
-
-**JSON file detection:**
-- First checks root directory for any `.json` file
-- Falls back to recursive search for `theme.json`
-- Supports files like `24hr-Tahoe-2026.json`
-
-## Configuration Persistence
-
-**What persists across reboots:**
-- `current_image_index` - Which image to show next
-- `current_time_of_day` - Current time category
-
-**What doesn't persist:**
-- Extracted theme files (regenerated from .ddw zip)
-
-**Why this design:**
-- Config is small (2 integers) - easy to restore
-- Themes are large (100MB+) - extracted on demand
-- Original .ddw zip file always available for regeneration
-
-## Dependencies
-
-**System requirements:**
-- KDE Plasma 5.x
-- `kwriteconfig5` - KDE config tool
-- `kreadconfig5` - KDE config read tool
-- `plasma-apply-wallpaperimage` - Plasma wallpaper setter
-
-**Python requirements:**
-- Python 3.8+
-- No external Python packages required
-
-## Testing
-
-**Test coverage:** 34/35 tests passing
-
-**Test files:**
-- `test_config.py` - Configuration loading and validation
-- `test_config_validation.py` - Config schema validation
-- `test_zip_extraction.py` - Theme extraction from zip
-- `test_image_selection.py` - Image selection logic
-- `test_time_of_day.py` - Time-of-day detection
-- `test_wallpaper_change.py` - Wallpaper change functionality
-- `test_cli.py` - CLI argument parsing
+**Key functions:**
+- `create_initial_shuffle()` - Creates shuffled theme list
+- `save_shuffle_list()` - Persists shuffle state
+- `load_shuffle_list()` - Loads shuffle state
+- `get_next_theme()` - Gets next theme in rotation
 
 ## Key Design Decisions
 

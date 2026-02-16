@@ -1,106 +1,121 @@
 # KDE Wallpaper Changer
 
-A Python CLI tool for KDE Plasma that automatically changes wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Uses the Astral library for accurate sunrise/sunset calculations based on your location.
+A beautiful, native KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
+
+![GUI Interface](screenshots/) *Native KDE Plasma integration with Breeze styling*
 
 ## Features
 
-- Extract .ddw wallpaper themes from zip files
+### GUI Features
+- **Cross-fade image preview** - Smooth visual transitions between theme images
+- **Theme management** - Import and browse .ddw/.zip themes with instant previews
+- **Scheduler controls** - Start/stop background scheduler with event logging
+- **System tray integration** - Quick access to controls from system tray
+- **Multiple tabs** - Themes, Settings, and Scheduler tabs for organized workflow
+- **Auto-apply theme** - Apply selected theme with one click
+- **Daily theme shuffle** - Automatic theme rotation with shuffle management
+- **Native KDE integration** - Breeze color scheme, system icons, single-instance
+
+### Time-based Wallpaper Selection
 - Automatic time-of-day detection using Astral library (night, sunrise, day, sunset)
-- Time-based image selection within each time-of-day category
-- Support for --time argument to select specific images at specific times
-- Image list normalization (image 1 automatically moved to sunrise category)
-- Configurable timezone and location settings
-- Monitor mode for continuous wallpaper cycling
-- Status command to check current wallpaper
-- Comprehensive test coverage (64 tests passing)
+- Image selection based on position within time period
+- Configurable location and timezone for accurate sunrise/sunset calculations
+
+### Background Scheduler
+- Runs continuously without GUI
+- Configurable cycle intervals
+- Automatic theme rotation with shuffle support
+- Event logging for troubleshooting
 
 ## Requirements
 
-- Python 3.8+
-- KDE Plasma (any recent version)
-- Linux distribution with KDE Plasma (Fedora, Ubuntu, etc.)
-- Required system commands:
-  - plasma-apply-wallpaperimage - Primary method for setting wallpapers
-  - kwriteconfig5 - Fallback method for setting wallpapers
-  - kreadconfig5 - Reading current wallpaper path
-  - pgrep - Checking if Plasma is running
+- **Python 3.10+**
+- **KDE Plasma 6** (any recent version)
+- **Linux distribution with KDE Plasma** (Fedora, Ubuntu, Arch, etc.)
+
+### System Commands
+- `plasma-apply-wallpaperimage` - Primary method for setting wallpapers
+- `kwriteconfig5` - Fallback method for setting wallpapers
+- `kreadconfig5` - Reading current wallpaper path
+- `pgrep` - Checking if Plasma is running
 
 ### Python Dependencies
-
 ```bash
 pip install -r requirements.txt
 ```
 
-Runtime:
-- astral>=2.2 - For accurate sunrise/sunset calculations
-
-Development:
-- pytest>=7.0.0 - Testing framework
-- pytest-cov>=4.0.0 - Coverage reporting
-
 ## Installation
 
-1. Clone or download the repository:
+### From PyPI (Recommended)
+```bash
+pip install kwallpaper-changer
+```
 
+### From Source
+1. Clone or download the repository:
 ```bash
 git clone <repository-url>
 cd kwallpaper
 ```
 
 2. Install Python dependencies:
-
 ```bash
 pip install -r requirements.txt
 ```
 
-3. Make the CLI executable:
-
+3. Launch the GUI:
 ```bash
-chmod +x wallpaper_cli.py
-```
-
-4. Test the installation:
-
-```bash
-./wallpaper_cli.py --help
+python wallpaper_gui.py
 ```
 
 ## Configuration
 
 ### Config File Location
-
-Default: ~/.config/wallpaper-changer/config.json
+Default: `~/.config/wallpaper-changer/config.json`
 
 ```json
 {
   "interval": 5400,
   "retry_attempts": 3,
   "retry_delay": 5,
+  "scheduling": {
+    "interval": 60,
+    "run_cycle": true,
+    "daily_shuffle_enabled": true
+  },
   "location": {
     "city": "Phoenix",
     "latitude": 33.4484,
     "longitude": -112.074,
     "timezone": "America/Phoenix"
+  },
+  "application": {
+    "theme_mode": "system"
+  },
+  "theme": {
+    "last_applied": "theme-name"
   }
 }
 ```
 
-### Config Fields
+### Configuration Fields
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| interval | integer | Yes | Time in seconds between wallpaper changes (default: 5400 = 1.5 hours) |
-| retry_attempts | integer | Yes | Number of retry attempts if wallpaper change fails (default: 3) |
-| retry_delay | integer | Yes | Delay in seconds between retry attempts (default: 5) |
-| location | object | No | Location settings for sunrise/sunset calculations |
-| location.city | string | No | City name for location info |
-| location.latitude | float | No | Latitude for sunrise/sunset calculations |
-| location.longitude | float | No | Longitude for sunrise/sunset calculations |
-| location.timezone | string | No | IANA timezone string (e.g., America/Phoenix) |
+| Field | Type | Description |
+|-------|------|-------------|
+| interval | integer | Seconds between wallpaper changes (default: 5400 = 1.5 hours) |
+| retry_attempts | integer | Retry attempts on failure (default: 3) |
+| retry_delay | integer | Delay between retries in seconds (default: 5) |
+| scheduling.interval | integer | Scheduler cycle interval in seconds (default: 60) |
+| scheduling.run_cycle | boolean | Enable cycle task (default: true) |
+| scheduling.daily_shuffle_enabled | boolean | Enable daily theme shuffle (default: true) |
+| location.timezone | string | IANA timezone string (e.g., America/Phoenix) |
+| location.latitude | float | Latitude for sunrise/sunset calculations |
+| location.longitude | float | Longitude for sunrise/sunset calculations |
+| application.theme_mode | string | Color scheme: system/light/dark (default: system) |
+| theme.last_applied | string | Last applied theme folder name |
 
 ### Time-of-Day Categories
-
-The tool uses Astral library to calculate accurate sunrise/sunset times based on your location. The time-of-day categories are:
+The tool uses Astral library to calculate accurate sunrise/sunset times:
 
 - **night**: From dusk until dawn-30min (last 30 minutes before dawn shows image 1)
 - **sunrise**: From dawn-30min until sunrise+45min
@@ -108,253 +123,151 @@ The tool uses Astral library to calculate accurate sunrise/sunset times based on
 - **sunset**: From sunset-45min until dusk
 
 ### Image Indexing
-
-Images are numbered 1-16 in the theme. The normalization process ensures:
+Images are numbered 1-16 in the theme. The normalization ensures:
 - Image 1 is always in the sunrise category (for the last 30 minutes before dawn)
 - Images 14-16 are in the night category
 - Images 2-4 are in the sunrise category
 - Images 5-9 are in the day category
 - Images 10-13 are in the sunset category
 
+## Quick Start
+
+1. **Launch the application:**
+```bash
+python wallpaper_gui.py
+```
+
+2. **Import a theme:**
+   - Click "Import" button in the Themes tab
+   - Select a .ddw or .zip file
+   - The theme will be automatically extracted
+
+3. **Apply a theme:**
+   - Select a theme from the list
+   - Click "Apply" to set it as your wallpaper
+   - The scheduler can be started for automatic rotation
+
+4. **Configure scheduler:**
+   - Go to the Scheduler tab
+   - Click "Start" to enable background wallpaper rotation
+   - Adjust interval in Settings tab
+
+5. **View themes:**
+   - Themes tab shows all imported themes
+   - Preview automatically starts when tab is visible
+   - Cross-fade animation shows images in sequence
+
+## GUI Interface
+
+### Themes Tab
+- **Import** - Import .ddw or .zip theme files
+- **Theme list** - Browse available themes
+- **Preview** - Live cross-fade preview of theme images
+- **Apply** - Apply selected theme immediately
+
+### Settings Tab
+- **Scheduler** - Configure interval and cycle behavior
+- **Location** - Set timezone and coordinates for accurate sun calculations
+- **Appearance** - Override KDE color scheme (system/light/dark)
+
+### Scheduler Tab
+- **Start/Stop** - Control background scheduler
+- **Status** - View current scheduler state
+- **Event Log** - View scheduler events and errors
+
+### System Tray
+- Quick start/stop scheduler
+- Show/hide main window
+- View scheduler status
+
 ## Usage
 
-### Extract Theme
-
-Extract a .ddw wallpaper theme from a zip file:
-
+### Launch GUI
 ```bash
-./wallpaper_cli.py extract --theme-path /path/to/theme.ddw --cleanup
+python wallpaper_gui.py
 ```
 
-Options:
-- --theme-path: Path to the .ddw zip file (required)
-- --cleanup: Remove the temporary extraction directory after extraction (optional)
-
-Output:
-```
-Extracted to: /home/user/.cache/wallpaper-changer/theme_name
-Theme: 24hr Tahoe
-Image credits: Photographer Name
-Image filename pattern: 24hr-Tahoe-2026_*.jpeg
-Sunrise images: [1, 2, 3, 4]
-Day images: [5, 6, 7, 8, 9]
-Sunset images: [10, 11, 12, 13]
-Night images: [14, 15, 16]
-```
-
-### Change Wallpaper
-
-Change the current wallpaper to the next image in the time-of-day category:
-
+### Launch CLI (for advanced users)
 ```bash
-./wallpaper_cli.py change --theme-path /path/to/theme.ddw
+python wallpaper_cli.py
 ```
 
-Options:
-- --theme-path: Path to the .ddw zip file or extracted theme directory (required)
-- --config: Path to config file (default: ~/.config/wallpaper-changer/config.json)
-- --monitor: Run continuously, cycling wallpapers based on time-of-day
-- --time: Specific time to use for wallpaper selection (HH:MM format, e.g., 04:22)
-
-Output:
-```
-Selecting image for: day
-Changing wallpaper to: /home/user/.cache/wallpaper-changer/24hr-Tahoe-2026_7.jpeg
-Wallpaper changed successfully!
-```
-
-Note: The theme will be extracted if a zip file is provided (cleanup=False by default).
-
-### List Images
-
-List all available images for a specific time-of-day category:
-
+### Import Theme
 ```bash
-./wallpaper_cli.py list --theme-path <theme-path> --time-of-day day
+# Via GUI: Click Import button
+# Via CLI:
+python wallpaper_cli.py extract --theme-path /path/to/theme.ddw --cleanup
 ```
 
-Options:
-- --theme-path: Path to the extracted theme directory or theme name (required)
-- --time-of-day: Time-of-day category: sunrise, day, sunset, or night (optional, defaults to current category)
-- --config: Path to config file (default: ~/.config/wallpaper-changer/config.json)
-
-Output:
-```
-Images for day: [5, 6, 7, 8, 9]
-```
-
-### Check Status
-
-Check the current wallpaper and time-of-day:
-
+### Apply Theme
 ```bash
-./wallpaper_cli.py status
+# Via GUI: Select theme and click Apply
+# Via CLI:
+python wallpaper_cli.py change --theme-path /path/to/theme.ddw
 ```
 
-Options:
-- --config: Path to config file (default: ~/.config/wallpaper-changer/config.json)
-
-Output:
-```
-Current wallpaper:
-  Path: /home/user/.cache/wallpaper-changer/24hr-Tahoe-2026_7.jpeg
-  File: 24hr-Tahoe-2026_7.jpeg
-
-Current time-of-day: day
-Image index: N/A (time-based selection now)
-```
-
-### Available CLI Commands
-
+### Start Scheduler
 ```bash
-./wallpaper_cli.py --help
-```
-
-## Advanced Usage
-
-### Using with Specific Time
-
-To select a specific image at a specific time (useful for testing):
-
-```bash
-./wallpaper_cli.py change --theme-path ./24hr-Tahoe-2026.ddw --time 04:22
-```
-
-This will:
-1. Detect the time-of-day category for 04:22 (night)
-2. Calculate which image to show based on position within the night period
-3. Change the wallpaper to that image
-
-### Using with Systemd Service
-
-Create a systemd service for automatic wallpaper changes:
-
-```ini
-[Unit]
-Description=KDE Wallpaper Changer
-After=network.target plasmashell.service
-
-[Service]
-Type=simple
-User=your_username
-ExecStart=/path/to/wallpaper_cli.py change --theme-path /path/to/theme.ddw
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable the service:
-
-```bash
-sudo systemctl enable wallpaper-changer.service
-sudo systemctl start wallpaper-changer.service
-```
-
-### Monitor Mode
-
-Run continuously, cycling wallpapers based on time-of-day:
-
-```bash
-./wallpaper_cli.py change --theme-path ./24hr-Tahoe-2026.ddw --monitor
-```
-
-Press Ctrl+C to stop.
-
-### Multiple Themes
-
-You can maintain multiple themes in different directories:
-
-```bash
-# Theme 1 - Day theme
-./wallpaper_cli.py extract --theme-path ~/wallpapers/day-theme.ddw --cleanup
-
-# Theme 2 - Night theme
-./wallpaper_cli.py extract --theme-path ~/wallpapers/night-theme.ddw --cleanup
-
-# Change to different themes based on time (add to systemd service)
-./wallpaper_cli.py change --theme-path ~/wallpapers/day-theme.ddw
+# Via GUI: Scheduler tab → Start
+# Via CLI:
+python wallpaper_cli.py change --theme-path /path/to/theme.ddw --monitor
 ```
 
 ## Troubleshooting
 
 ### Plasma Not Running
-
-Error: Error: Plasma is not running. Please start Plasma first.
+Error: "Plasma is not running"
 
 Solution: Ensure KDE Plasma is running:
 ```bash
 pgrep -x plasmashell
 ```
 
-If not running, start Plasma:
-```bash
-plasmashell &
-```
+### Theme Import Fails
+Error: "theme.json not found in zip file"
 
-### Wallpaper Not Changing
-
-Error: Error: Failed to change wallpaper
-
-Possible causes:
-1. Plasma is not running (see above)
-2. Image file path is incorrect
-3. plasma-apply-wallpaperimage command not found
-
-Solutions:
-1. Check Plasma status: pgrep -x plasmashell
-2. Verify image path exists: ls -la /path/to/image.jpeg
-3. Install KDE Plasma if missing: sudo dnf install plasma-workspace
-
-### Invalid Config File
-
-Error: Config validation failed: Missing required field interval
-
-Solution: Check your config file format:
-```bash
-cat ~/.config/wallpaper-changer/config.json
-```
-
-Ensure all required fields are present and valid.
-
-### Theme.json Not Found
-
-Error: theme.json not found in zip file
-
-Solution: Verify the .ddw file is valid and contains a JSON file:
+Solution: Verify the .ddw file is valid:
 ```bash
 unzip -l theme.ddw | grep "\.json"
 ```
 
-### Timezone Issues
+### Scheduler Won't Start
+1. Check APScheduler is installed: `pip install apscheduler`
+2. Verify Plasma is running: `pgrep -x plasmashell`
+3. Check event log in Scheduler tab
 
-If sunrise/sunset times seem incorrect:
+### Color Scheme Issues
+- Try different theme modes in Settings: System/Light/Dark
+- Restart application after changing theme mode
+- Check KDE System Settings → Appearance
 
-1. Check your timezone in config:
-   ```bash
-   cat ~/.config/wallpaper-changer/config.json | grep timezone
-   ```
+## Troubleshooting
 
-2. Verify the timezone is correct for your location (e.g., America/Phoenix for Arizona)
+### Plasma Not Running
+Error: "Plasma is not running"
 
-3. Check the calculated times:
-   ```bash
-   python3 -c "from kwallpaper.wallpaper_changer import detect_time_of_day_sun; print(detect_time_of_day_sun())"
-   ```
-
-### Test Failures
-
-Run tests to verify functionality:
-
+Solution: Ensure KDE Plasma is running:
 ```bash
-# Run all tests
-cd /home/admin/llama-cpp/projects/kwallpaper
-python3 -m pytest tests/ -v
-
-# Run with coverage
-python3 -m pytest tests/ --cov=kwallpaper --cov-report=html
+pgrep -x plasmashell
 ```
+
+### Theme Import Fails
+Error: "theme.json not found in zip file"
+
+Solution: Verify the .ddw file is valid:
+```bash
+unzip -l theme.ddw | grep "\.json"
+```
+
+### Scheduler Won't Start
+1. Check APScheduler is installed: `pip install apscheduler`
+2. Verify Plasma is running: `pgrep -x plasmashell`
+3. Check event log in Scheduler tab
+
+### Color Scheme Issues
+- Try different theme modes in Settings: System/Light/Dark
+- Restart application after changing theme mode
+- Check KDE System Settings → Appearance
 
 ## FAQ
 
@@ -414,64 +327,52 @@ Check Plasma status and error messages for root cause.
 ## Development
 
 ### Running Tests
-
 ```bash
 cd /home/admin/llama-cpp/projects/kwallpaper
 python3 -m pytest tests/ -v
 ```
 
-### Test Coverage
-
-Current test coverage:
-- Config validation (13/13 tests passing)
-- Zip extraction (5/5 tests passing)
-- Image selection (7/7 tests passing)
-- Time-of-day detection (6/6 tests passing)
-- Wallpaper change (3/3 tests passing)
-- Helper functions (10/10 tests passing)
-- Full day cycle (7/7 tests passing)
-- Astral detection (13/13 tests passing)
-
-Total: 64/64 tests passing
-
 ### Project Structure
-
 ```
 kwallpaper/
-├── wallpaper_cli.py              # CLI entry point
+├── wallpaper_gui.py              # Main GUI application (1069 lines)
+├── wallpaper_cli.py              # CLI wrapper (29 lines)
 ├── kwallpaper/
 │   ├── __init__.py               # Package init
-│   └── wallpaper_changer.py      # Core functionality
+│   ├── wallpaper_changer.py      # Core functionality (848 lines)
+│   ├── scheduler.py              # Background scheduler (243 lines)
+│   └── shuffle_list_manager.py   # Theme shuffling (186 lines)
 ├── tests/
-│   ├── test_config.py            # Config tests
-│   ├── test_config_validation.py # Config validation tests
-│   ├── test_zip_extraction.py    # Zip extraction tests
-│   ├── test_helper_functions.py  # Helper function tests
-│   ├── test_wallpaper_change.py  # Wallpaper change tests
-│   ├── test_full_day_astral.py   # Full day cycle tests
-│   └── test_astral_time_detection.py  # Astral detection tests
+│   ├── test_config.py
+│   ├── test_config_validation.py
+│   ├── test_zip_extraction.py
+│   ├── test_helper_functions.py
+│   ├── test_wallpaper_change.py
+│   ├── test_full_day_astral.py
+│   └── test_astral_time_detection.py
 ├── requirements.txt              # Python dependencies
-├── setup.py                      # Package setup
 └── README.md                     # This file
 ```
-
-## Contributing
-
-Contributions are welcome! Please ensure:
-- All tests pass before submitting
-- New code includes appropriate tests
-- Changes maintain backward compatibility
-- Error handling is comprehensive
 
 ## License
 
 This project is provided as-is for personal use.
 
-## Support
-
-For issues, questions, or suggestions, please refer to the troubleshooting section or create an issue in the repository.
-
 ## Acknowledgments
 
-- KDE Plasma's plasma-apply-wallpaperimage and kwriteconfig5 tools make this wallpaper changer possible
-- Astral library for accurate sunrise/sunset calculations
+- **KDE Plasma** - plasma-apply-wallpaperimage and kwriteconfig5 tools
+- **Astral Library** - Accurate sunrise/sunset calculations
+- **PyQt6** - Native KDE Plasma integration and modern UI components
+- **APScheduler** - Background scheduler for continuous operation
+
+## Changelog
+
+### Version 1.0.0 (Current)
+- Full GUI application with native KDE Plasma 6 integration
+- Cross-fade image preview widget
+- System tray integration
+- Scheduler with event logging
+- Daily theme shuffle support
+- Multiple tab interface (Themes, Settings, Scheduler)
+- Configurable color scheme (system/light/dark)
+- Background wallpaper rotation

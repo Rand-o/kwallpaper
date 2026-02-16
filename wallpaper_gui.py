@@ -184,13 +184,13 @@ class ImageCrossFadeWidget(QWidget):
 
         # Cross-fade animation
         self._anim = QPropertyAnimation(self, b"blendValue")
-        self._anim.setDuration(800)
+        self._anim.setDuration(1200)    # 1.2 s cross-fade for cinematic smoothness
         self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
         self._anim.finished.connect(self._on_fade_done)
 
         # Auto-advance timer
         self._timer = QTimer(self)
-        self._timer.setInterval(3500)
+        self._timer.setInterval(2700)   # 1.5 s hold + 1.2 s fade = 2.7 s per frame
         self._timer.timeout.connect(self._advance)
 
     # -- animated property -----------------------------------------------------
@@ -205,17 +205,17 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- public API ------------------------------------------------------------
     def set_images(self, paths: list[str]):
-        """Load a new set of image paths and reset the slideshow."""
+        """Load images and pre-cache for smooth playback."""
         self._timer.stop()
         self._anim.stop()
+        self._cache.clear()
         self._images = paths
         self._idx = 0
         self._blend = 0.0
-        self._cache.clear()
+        # Pre-cache first 2 images for immediate playback
         for i in range(min(2, len(paths))):
             self._ensure(i)
         self.update()
-
     def start(self):
         if len(self._images) > 1:
             self._timer.start()
@@ -226,11 +226,16 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- internals -------------------------------------------------------------
     def _ensure(self, idx: int):
+        """Load image into cache if not already present, with LRU eviction."""
         if idx in self._cache or not (0 <= idx < len(self._images)):
             return
         pm = QPixmap(self._images[idx])
         if not pm.isNull():
             self._cache[idx] = pm
+        # Evict oldest cached image if we have too many
+        if len(self._cache) > 3:
+            oldest = next(iter(self._cache))
+            del self._cache[oldest]
 
     def _advance(self):
         if len(self._images) < 2:
@@ -243,13 +248,8 @@ class ImageCrossFadeWidget(QWidget):
         self._anim.start()
 
     def _on_fade_done(self):
-        old = self._idx
         self._idx = (self._idx + 1) % len(self._images)
         self._blend = 0.0
-        # Evict old pixmap to limit memory
-        if old != self._idx and old in self._cache:
-            del self._cache[old]
-        self._ensure((self._idx + 1) % len(self._images))
         self.update()
 
     def paintEvent(self, event):
@@ -425,18 +425,70 @@ class ThemesPage(QWidget):
         if not cur:
             return
         name   = cur.text()
-        folder = Path(cur.data(Qt.ItemDataRole.UserRole)).name
+        folder_path = cur.data(Qt.ItemDataRole.UserRole)
+        folder = Path(folder_path).name
+        
+        # Load config to check shuffle setting
+        config = load_config(self._cfg)
+        shuffle_enabled = config.get('scheduling', {}).get('daily_shuffle_enabled', False)
+        
+        # If shuffle is enabled, ask user for confirmation
+        if shuffle_enabled:
+            reply = QMessageBox.question(
+                self,
+                "Confirm Theme Apply",
+                f"Daily shuffle is enabled. If you apply this theme, a new shuffle list will be created. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return  # Cancel the apply operation
+        
         try:
-            from kwallpaper.wallpaper_changer import run_change_command
+            from kwallpaper.wallpaper_changer import run_change_command, save_config
+            from kwallpaper.shuffle_list_manager import save_shuffle_list, get_current_date, create_initial_shuffle
             from types import SimpleNamespace
+            
+            logger.info(f"Applying theme: {name}, folder_path: {folder_path}, folder: {folder}")
+            
+            # Run the change command
             rc = run_change_command(SimpleNamespace(
-                theme_path=folder, config=self._cfg,
+                theme_path=folder_path, config=self._cfg,
                 monitor=False, time=None))
+            logger.info(f"Apply run_change_command returned: {rc}")
+            
+            # Save the applied theme to config so it persists for scheduler
+            config['theme']['last_applied'] = folder
+            logger.info(f"Saving last_applied: {folder}")
+            save_config(self._cfg, config)
+            
+            # Verify it was saved
+            with open(self._cfg) as f:
+                saved = json.load(f)
+            logger.info(f"Config after save: theme.last_applied = {saved.get('theme', {}).get('last_applied')}")
+            
+            # Reset shuffle list state if shuffle is enabled
+            if shuffle_enabled:
+                themes = [str(p) for _, p in discover_themes()]
+                if folder_path in themes:
+                    # Create a new shuffled list with current theme at index 0,
+                    # then shuffled list of remaining themes
+                    other_themes = [t for t in themes if t != folder_path]
+                    import random
+                    shuffled = [folder_path] + random.sample(other_themes, len(other_themes))
+                    idx = 0  # Current theme is always at index 0
+                    logger.info(f"Resetting shuffle list, folder: {folder}, index: {idx}")
+                    save_shuffle_list(shuffled, idx, get_current_date())
+                else:
+                    logger.warning(f"Folder path not in themes list: {folder_path}")
+            
             self._status(
                 f"Applied: {name}" if rc == 0
                 else f"Failed to apply: {name}")
         except Exception as e:
+            import traceback
             logger.error(f"Apply failed: {e}")
+            logger.error(traceback.format_exc())
             QMessageBox.warning(self, "Apply Failed", str(e))
 
     # ── helpers ---------------------------------------------------------------
@@ -454,12 +506,8 @@ class ThemesPage(QWidget):
                 return result
             with open(jf) as fh:
                 data = json.load(fh)
-            idxs: set[int] = set()
-            for cat in ("sunrise", "day", "sunset", "night"):
-                for i in data.get(f"{cat}ImageList", []):
-                    if 1 <= i <= 16:
-                        idxs.add(i)
-            for i in sorted(idxs):
+            # Always try all 16 indices so the timelapse is complete
+            for i in range(1, 17):
                 fp = self._find(theme_path, i)
                 if fp:
                     result.append(fp)
@@ -945,6 +993,18 @@ class WallpaperChangerWindow(QMainWindow):
             self._cleanup()
             event.accept()
 
+    def showEvent(self, event):
+        """Start preview when window is shown."""
+        super().showEvent(event)
+        if self.tabs.currentWidget() is self.themes:
+            self.themes.preview.start()
+
+    def hideEvent(self, event):
+        """Stop preview when window is hidden."""
+        super().hideEvent(event)
+        if self.tabs.currentWidget() is self.themes:
+            self.themes.preview.stop()
+
     def _quit(self):
         self._persist_state()
         self._cleanup()
@@ -953,6 +1013,17 @@ class WallpaperChangerWindow(QMainWindow):
     def _cleanup(self):
         if self.sched.is_running():
             self.sched.scheduler.stop(wait=True)
+
+    def windowEvent(self, event):
+        """Handle window state changes to stop preview when minimized."""
+        if event.type() == 22:  # QEvent.WindowStateChange
+            if event.newState() & Qt.WindowState.WindowMinimized:
+                if self.tabs.currentWidget() is self.themes:
+                    self.themes.preview.stop()
+            else:
+                if self.tabs.currentWidget() is self.themes:
+                    self.themes.preview.start()
+        return super().windowEvent(event)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
