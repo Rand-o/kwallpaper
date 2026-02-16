@@ -78,32 +78,45 @@ def _show_existing_instance():
 
 # KDE 6 Plasma Design System
 KDE_COLORS = {
-    'background': '#eff0f1',
-    'panel': '#ffffff',
-    'text_primary': '#31363b',
-    'text_secondary': '#636d76',
-    'accent': '#0082FC',
-    'accent_hover': '#0072e6',
-    'accent_active': '#005db3',
-    'border': '#d3d6d9',
-    'border_hover': '#0082FC',
+    'light': {
+        'background': '#eff0f1',
+        'panel': '#ffffff',
+        'text_primary': '#31363b',
+        'text_secondary': '#636d76',
+        'accent': '#0082FC',
+        'accent_hover': '#0072e6',
+        'accent_active': '#005db3',
+        'border': '#d3d6d9',
+        'border_hover': '#0082FC',
+    },
+    'dark': {
+        'background': '#1e1e1e',
+        'panel': '#2d2d2d',
+        'text_primary': '#ffffff',
+        'text_secondary': '#b0b0b0',
+        'accent': '#0082FC',
+        'accent_hover': '#0072e6',
+        'accent_active': '#005db3',
+        'border': '#3d3d3d',
+        'border_hover': '#0082FC',
+    },
 }
 
 KDE_STYLES = {
     'card': """
         QFrame {
-            background-color: #ffffff;
-            border: 1px solid #d3d6d9;
+            background-color: {panel};
+            border: 1px solid {border};
             border-radius: 8px;
             padding: 16px;
         }
         QFrame:hover {
-            border: 1px solid #0082FC;
+            border: 1px solid {accent};
         }
     """,
     'button_primary': """
         QPushButton {
-            background-color: #0082FC;
+            background-color: {accent};
             color: white;
             border: none;
             border-radius: 6px;
@@ -111,42 +124,43 @@ KDE_STYLES = {
             font-weight: 500;
         }
         QPushButton:hover {
-            background-color: #0072e6;
+            background-color: {accent_hover};
         }
         QPushButton:pressed {
-            background-color: #005db3;
+            background-color: {accent_active};
         }
     """,
     'button_secondary': """
         QPushButton {
-            background-color: #eff0f1;
-            color: #31363b;
-            border: 1px solid #d3d6d9;
+            background-color: {panel};
+            color: {text_primary};
+            border: 1px solid {border};
             border-radius: 6px;
             padding: 8px 16px;
             font-weight: 500;
         }
         QPushButton:hover {
-            background-color: #e0e3e6;
-            border: 1px solid #0082FC;
+            background-color: {background};
+            border: 1px solid {accent};
         }
     """,
     'input': """
         QLineEdit, QSpinBox, QDoubleSpinBox {
-            background-color: #ffffff;
-            border: 1px solid #d3d6d9;
+            background-color: {panel};
+            border: 1px solid {border};
             border-radius: 4px;
             padding: 6px 10px;
-            color: #31363b;
+            color: {text_primary};
             min-height: 28px;
         }
         QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-            border: 2px solid #0082FC;
+            border: 2px solid {accent};
             padding: 5px 9px;
         }
     """,
     'checkbox': """
         QCheckBox {
+            color: {text_primary};
             spacing: 8px;
             padding: 4px;
             color: #31363b;
@@ -318,6 +332,9 @@ class SettingsTab(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
         
+        # Load saved theme mode
+        self._load_theme_mode()
+        
         # Left column - all settings (350px fixed width)
         left_column = QWidget()
         left_layout = QVBoxLayout()
@@ -395,6 +412,24 @@ class SettingsTab(QWidget):
         location_form.addRow("Longitude:", self.longitude)
         
         left_layout.addWidget(location_card)
+        
+        # Application Settings Section
+        app_settings_card = ModernCard()
+        app_settings_inner_layout = QVBoxLayout()
+        app_settings_inner_layout.setSpacing(12)
+        app_settings_card.setLayout(app_settings_inner_layout)
+        
+        app_title = QLabel("Application Settings")
+        app_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
+        app_settings_inner_layout.addWidget(app_title)
+        
+        self.theme_mode = QComboBox()
+        self.theme_mode.addItems(["Light Mode", "Dark Mode"])
+        self.theme_mode.setStyleSheet(KDE_STYLES['input'])
+        self.theme_mode.currentIndexChanged.connect(self._on_theme_changed)
+        app_settings_inner_layout.addRow("Theme Mode:", self.theme_mode)
+        
+        left_layout.addWidget(app_settings_card)
         
         left_column.setFixedWidth(350)
         main_layout.addWidget(left_column)
@@ -882,6 +917,81 @@ class ThemesTab(QWidget):
         # Store reference to check later when tab widget is fully set up
         self._pending_tab_check = True
         
+    def _load_theme_mode(self):
+        """Load the saved theme mode from config."""
+        try:
+            from kwallpaper.wallpaper_changer import load_config
+            config = load_config(self.config_path)
+            app_config = config.get('application', {})
+            theme_mode = app_config.get('theme_mode', 'light')
+            
+            # Set combo box to correct index
+            if theme_mode == 'dark':
+                self.theme_mode.setCurrentIndex(1)
+            else:
+                self.theme_mode.setCurrentIndex(0)
+                
+            # Apply the theme
+            self._apply_theme_mode(theme_mode)
+        except Exception as e:
+            logger.warning(f"Failed to load theme mode: {e}")
+    
+    def _on_theme_changed(self, index: int):
+        """Handle theme mode change."""
+        from kwallpaper.wallpaper_changer import load_config, save_config
+        
+        theme_mode = "dark" if index == 1 else "light"
+        
+        # Load current config
+        config = load_config(self.config_path)
+        
+        # Update theme mode in config
+        if 'application' not in config:
+            config['application'] = {}
+        config['application']['theme_mode'] = theme_mode
+        
+        # Save config
+        save_config(self.config_path, config)
+        
+        # Reload styles
+        self._apply_theme_mode(theme_mode)
+    
+    def _apply_theme_mode(self, theme_mode: str):
+        """Apply the selected theme mode to all widgets."""
+        colors = KDE_COLORS[theme_mode]
+        
+        # Update all styles with current colors
+        self._update_styles(colors)
+        
+        # Update the window background
+        self.setStyleSheet(f"background-color: {colors['background']}")
+        
+        # Update all child widgets
+        for child in self.findChildren(QWidget):
+            if not isinstance(child, (QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, QCheckBox, QComboBox, QTextEdit)):
+                child.setStyleSheet("")
+        
+        # Re-apply card styles
+        for card in self.findChildren(QFrame):
+            if card.property('is_card'):
+                card.setStyleSheet(self._get_card_style(colors))
+        
+        # Re-apply input styles
+        for widget in self.findChildren((QLineEdit, QSpinBox, QDoubleSpinBox)):
+            widget.setStyleSheet(self._get_input_style(colors))
+        
+        # Re-apply button styles
+        for widget in self.findChildren(QPushButton):
+            if widget.text() in ["Start Scheduler", "Stop Scheduler", "Apply", "Import Theme File"]:
+                if widget.text() == "Import Theme File":
+                    widget.setStyleSheet(self._get_button_secondary_style(colors))
+                else:
+                    widget.setStyleSheet(self._get_button_primary_style(colors))
+        
+        # Re-apply label styles
+        for widget in self.findChildren(QLabel):
+            widget.setStyleSheet(f"color: {colors['text_primary']}")
+    
     def _check_initial_tab_visibility(self):
         """Check if this tab is visible and start timer if so."""
         if not self._pending_tab_check:
