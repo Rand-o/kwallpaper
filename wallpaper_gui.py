@@ -1,6 +1,15 @@
 #!/usr/bin/env python3
 """
-KDE Wallpaper Changer - GUI Application with Scheduling
+KDE Wallpaper Changer — Native KDE Plasma 6 Application
+
+Integrates with the KDE desktop by:
+  • Using system Breeze styling and icons via QPalette / QIcon.fromTheme()
+  • Providing a QSystemTrayIcon with scheduler controls
+  • Persisting window state with QSettings
+  • Enforcing single-instance via local socket
+
+Color scheme can be overridden in Settings → Appearance,
+or follows the system KDE theme by default.
 """
 
 import sys
@@ -15,12 +24,18 @@ try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
-        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox, QFrame,
-        QScrollArea, QFileDialog, QListWidget, QListWidgetItem,
-        QSystemTrayIcon, QMenu
+        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox,
+        QGroupBox, QSplitter, QFileDialog, QListWidget, QListWidgetItem,
+        QSystemTrayIcon, QMenu, QSizePolicy, QMessageBox, QFrame,
+        QScrollArea,
     )
-    from PyQt6.QtCore import Qt, pyqtSignal, QObject, QTimer, QPropertyAnimation, QEasingCurve, pyqtProperty, QRectF
-    from PyQt6.QtGui import QFont, QPixmap, QColor, QPainter, QPen, QIcon, QAction
+    from PyQt6.QtCore import (
+        Qt, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve,
+        pyqtProperty, QSettings,
+    )
+    from PyQt6.QtGui import (
+        QPixmap, QColor, QPainter, QPen, QIcon, QPalette, QFontDatabase,
+    )
     PYQT6_AVAILABLE = True
 except ImportError:
     PYQT6_AVAILABLE = False
@@ -28,1623 +43,955 @@ except ImportError:
 from kwallpaper.scheduler import SchedulerManager, create_scheduler
 from kwallpaper.wallpaper_changer import (
     load_config, save_config, DEFAULT_CONFIG_PATH,
-    discover_themes, extract_theme
+    discover_themes, extract_theme,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# ─────────────────────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s  %(levelname)-8s  %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-# Global reference to the main window for single instance
-_main_window = None
+APP_NAME    = "Wallpaper Changer"
+APP_VERSION = "1.0.0"
+ORG_NAME    = "kwallpaper"
+SOCKET_PORT = 28765
 
-# Single instance lock - uses socket to prevent multiple instances
-_instance_lock = None
+_main_window:    Optional["WallpaperChangerWindow"] = None
+_instance_lock:  Optional[socket.socket]            = None
+_system_palette: Optional["QPalette"]               = None   # snapshot at startup
 
 
-def _acquire_single_instance_lock():
-    """Acquire a lock to prevent multiple instances. Returns True if lock acquired."""
+# ── Single-instance helpers ──────────────────────────────────────────────────
+
+def _acquire_lock() -> bool:
+    """Bind a local TCP socket to act as an instance lock."""
     global _instance_lock
     try:
-        # Create a socket and bind to a local port
         _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _instance_lock.bind(('127.0.0.1', 28765))  # Random port for single instance
+        _instance_lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        _instance_lock.bind(("127.0.0.1", SOCKET_PORT))
         _instance_lock.listen(1)
+        _instance_lock.setblocking(False)
         return True
     except OSError:
-        # Port is already in use, another instance is running
         return False
 
 
-def _show_existing_instance():
-    """Show the existing window instance by sending a signal via socket."""
-    global _main_window
-    
-    # First try to show the local window reference
-    if _main_window is not None:
-        _main_window.show()
-        _main_window.raise_()
-        _main_window.activateWindow()
-        return True
-    
-    # If no local reference, try to send signal to existing instance
+def _signal_running_instance() -> bool:
+    """Tell the already-running instance to raise its window."""
     try:
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_socket.connect(('127.0.0.1', 28765))
-        client_socket.send(b'SHOW_WINDOW')
-        client_socket.close()
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.connect(("127.0.0.1", SOCKET_PORT))
+        s.sendall(b"SHOW")
+        s.close()
         return True
     except Exception:
         return False
 
 
-# KDE 6 Plasma Design System
-KDE_COLORS = {
-    'light': {
-        'background': '#eff0f1',
-        'panel': '#ffffff',
-        'text_primary': '#31363b',
-        'text_secondary': '#636d76',
-        'accent': '#0082FC',
-        'accent_hover': '#0072e6',
-        'accent_active': '#005db3',
-        'border': '#d3d6d9',
-        'border_hover': '#0082FC',
-    },
-    'dark': {
-        'background': '#1e1e1e',
-        'panel': '#2d2d2d',
-        'text_primary': '#ffffff',
-        'text_secondary': '#b0b0b0',
-        'accent': '#0082FC',
-        'accent_hover': '#0072e6',
-        'accent_active': '#005db3',
-        'border': '#3d3d3d',
-        'border_hover': '#0082FC',
-    },
-}
+# ── Breeze-matching QPalettes for manual scheme override ─────────────────────
 
-KDE_STYLES = {
-    'card': """
-        QFrame {
-            background-color: {panel};
-            border: 1px solid {border};
-            border-radius: 8px;
-            padding: 16px;
-        }
-        QFrame:hover {
-            border: 1px solid {accent};
-        }
-    """,
-    'button_primary': """
-        QPushButton {
-            background-color: {accent};
-            color: white;
-            border: none;
-            border-radius: 6px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: {accent_hover};
-        }
-        QPushButton:pressed {
-            background-color: {accent_active};
-        }
-    """,
-    'button_secondary': """
-        QPushButton {
-            background-color: {panel};
-            color: {text_primary};
-            border: 1px solid {border};
-            border-radius: 6px;
-            padding: 8px 16px;
-            font-weight: 500;
-        }
-        QPushButton:hover {
-            background-color: {background};
-            border: 1px solid {accent};
-        }
-    """,
-    'input': """
-        QLineEdit, QSpinBox, QDoubleSpinBox {
-            background-color: {panel};
-            border: 1px solid {border};
-            border-radius: 4px;
-            padding: 6px 10px;
-            color: {text_primary};
-            min-height: 28px;
-        }
-        QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {
-            border: 2px solid {accent};
-            padding: 5px 9px;
-        }
-    """,
-    'checkbox': """
-        QCheckBox {
-            color: {text_primary};
-            spacing: 8px;
-            padding: 4px;
-            color: #31363b;
-        }
-        QCheckBox::indicator {
-            width: 20px;
-            height: 20px;
-            border: 2px solid #d3d6d9;
-            border-radius: 4px;
-            background-color: #ffffff;
-        }
-        QCheckBox::indicator:hover {
-            border: 2px solid #0082FC;
-        }
-        QCheckBox::indicator:checked {
-            background-color: #0082FC;
-            border: 2px solid #0082FC;
-        }
-    """,
-    'tab_widget': """
-        QTabWidget::pane {
-            border: 1px solid #d3d6d9;
-            border-radius: 8px;
-            background-color: #eff0f1;
-        }
-        QTabBar::tab {
-            background-color: #eff0f1;
-            color: #31363b;
-            padding: 8px 16px;
-            border: 1px solid #d3d6d9;
-            border-bottom: none;
-            border-top-left-radius: 6px;
-            border-top-right-radius: 6px;
-            margin-right: 2px;
-        }
-        QTabBar::tab:hover {
-            background-color: #e0e3e6;
-        }
-        QTabBar::tab:selected {
-            background-color: #ffffff;
-            color: #0082FC;
-            border-bottom: 2px solid #0082FC;
-        }
-    """,
-    'scroll_area': """
-        QScrollArea {
-            border: none;
-            background-color: #eff0f1;
-        }
-        QScrollArea > QWidget > QWidget {
-            background-color: #eff0f1;
-        }
-    """,
-    'label_title': """
-        QLabel {
-            color: #31363b;
-            font-weight: 600;
-            font-size: 14px;
-        }
-    """,
-    'label_subtitle': """
-        QLabel {
-            color: #636d76;
-            font-size: 12px;
-        }
-    """,
-}
-
-logger = logging.getLogger(__name__)
+def _breeze_light() -> QPalette:
+    """QPalette that mirrors KDE Breeze Light colour scheme."""
+    p = QPalette()
+    _s = p.setColor
+    for role, c in (
+        (QPalette.ColorRole.Window,          "#eff0f1"),
+        (QPalette.ColorRole.WindowText,      "#31363b"),
+        (QPalette.ColorRole.Base,            "#fcfcfc"),
+        (QPalette.ColorRole.AlternateBase,   "#eff0f1"),
+        (QPalette.ColorRole.Text,            "#31363b"),
+        (QPalette.ColorRole.Button,          "#eff0f1"),
+        (QPalette.ColorRole.ButtonText,      "#31363b"),
+        (QPalette.ColorRole.Highlight,       "#3daee9"),
+        (QPalette.ColorRole.HighlightedText, "#fcfcfc"),
+        (QPalette.ColorRole.ToolTipBase,     "#eff0f1"),
+        (QPalette.ColorRole.ToolTipText,     "#31363b"),
+        (QPalette.ColorRole.Link,            "#2980b9"),
+        (QPalette.ColorRole.Mid,             "#c8cbce"),
+        (QPalette.ColorRole.PlaceholderText, "#8e9297"),
+    ):
+        _s(role, QColor(c))
+    d = QPalette.ColorGroup.Disabled
+    for role in (QPalette.ColorRole.WindowText,
+                 QPalette.ColorRole.Text,
+                 QPalette.ColorRole.ButtonText):
+        _s(d, role, QColor("#a0a1a3"))
+    return p
 
 
-class ModernCard(QFrame):
-    """Modern card widget with KDE 6 Plasma styling."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFrameShape(QFrame.Shape.StyledPanel)
-        self.setFrameShadow(QFrame.Shadow.Raised)
-        self.setStyleSheet(KDE_STYLES['card'])
+def _breeze_dark() -> QPalette:
+    """QPalette that mirrors KDE Breeze Dark colour scheme."""
+    p = QPalette()
+    _s = p.setColor
+    for role, c in (
+        (QPalette.ColorRole.Window,          "#31363b"),
+        (QPalette.ColorRole.WindowText,      "#eff0f1"),
+        (QPalette.ColorRole.Base,            "#232629"),
+        (QPalette.ColorRole.AlternateBase,   "#31363b"),
+        (QPalette.ColorRole.Text,            "#eff0f1"),
+        (QPalette.ColorRole.Button,          "#31363b"),
+        (QPalette.ColorRole.ButtonText,      "#eff0f1"),
+        (QPalette.ColorRole.Highlight,       "#3daee9"),
+        (QPalette.ColorRole.HighlightedText, "#eff0f1"),
+        (QPalette.ColorRole.ToolTipBase,     "#31363b"),
+        (QPalette.ColorRole.ToolTipText,     "#eff0f1"),
+        (QPalette.ColorRole.Link,            "#2980b9"),
+        (QPalette.ColorRole.Mid,             "#464b50"),
+        (QPalette.ColorRole.PlaceholderText, "#7f8487"),
+    ):
+        _s(role, QColor(c))
+    d = QPalette.ColorGroup.Disabled
+    for role in (QPalette.ColorRole.WindowText,
+                 QPalette.ColorRole.Text,
+                 QPalette.ColorRole.ButtonText):
+        _s(d, role, QColor("#6e7174"))
+    return p
 
 
-class SystemTrayIcon(QSystemTrayIcon):
-    """System tray icon with scheduler controls."""
-    
-    def __init__(self, scheduler_tab, parent=None):
-        super().__init__(parent)
-        self.scheduler_tab = scheduler_tab
-        self.setIcon(self._create_icon())
-        self.setVisible(True)
-        self.activated.connect(self._on_activated)
-        
-    def _create_icon(self) -> QIcon:
-        """Create a window icon with 4 equal panes for the system tray."""
-        # Create a window icon with 4 equal panes - square-ish shape
-        # 2 rows x 2 columns = 4 panes, horizontal divider centered
-        svg = '''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 28 32" fill="#31363b">
-            <rect x="2" y="2" width="24" height="28" rx="2" fill="#ffffff" stroke="#31363b" stroke-width="1.5"/>
-            <line x1="14" y1="2" x2="14" y2="30" stroke="#31363b" stroke-width="1.5"/>
-            <line x1="2" y1="16" x2="26" y2="16" stroke="#31363b" stroke-width="1.5"/>
-        </svg>'''
-        pixmap = QPixmap()
-        pixmap.loadFromData(svg.encode('utf-8'))
-        return QIcon(pixmap)
-        
-    def _on_activated(self, reason):
-        """Handle tray icon activation."""
-        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
-            self._open_app()
-        
-    def update_menu(self):
-        """Update tray menu based on scheduler status."""
-        menu = QMenu()
-        
-        # Scheduler status
-        status = "Running" if self.scheduler_tab.scheduler.is_running() else "Stopped"
-        status_action = menu.addAction(f"Status: {status}")
-        status_action.setEnabled(False)
-        
-        # Set tooltip with status
-        self.setToolTip(f"Scheduler Status - {status}")
-        
-        menu.addSeparator()
-        
-        # Start scheduler
-        if not self.scheduler_tab.scheduler.is_running():
-            start_action = menu.addAction("Start Scheduler")
-            start_action.triggered.connect(self.scheduler_tab._start_scheduler)
-        
-        # Stop scheduler
-        if self.scheduler_tab.scheduler.is_running():
-            stop_action = menu.addAction("Stop Scheduler")
-            stop_action.triggered.connect(self.scheduler_tab._stop_scheduler)
-        
-        menu.addSeparator()
-        
-        # Open app window
-        open_action = menu.addAction("Open App")
-        open_action.triggered.connect(self._open_app)
-        
-        # Quit
-        quit_action = menu.addAction("Quit")
-        quit_action.triggered.connect(QApplication.quit)
-        
-        self.setContextMenu(menu)
-        
-    def _open_app(self):
-        """Open the main application window."""
-        # Find the main window by traversing up the parent hierarchy
-        parent = self.parent()
-        while parent and not hasattr(parent, 'show'):
-            parent = parent.parent()
-        if parent and hasattr(parent, 'show'):
-            parent.show()
-            parent.raise_()
-            parent.activateWindow()
+def apply_color_scheme(name: str):
+    """Apply a colour scheme by name: 'system', 'light', or 'dark'."""
+    app = QApplication.instance()
+    if name == "dark":
+        app.setPalette(_breeze_dark())
+    elif name == "light":
+        app.setPalette(_breeze_light())
+    else:
+        if _system_palette is not None:
+            app.setPalette(QPalette(_system_palette))
 
 
-class SettingsTab(QWidget):
-    """Settings tab for scheduler configuration - KDE 6 Plasma design."""
-    
-    def __init__(self, config_path: Optional[str] = None, parent=None):
-        super().__init__(parent)
-        self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
-        self._init_ui()
-        
-    def _init_ui(self):
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(16)
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        self.setLayout(main_layout)
-        
-        # Left column - all settings (350px fixed width)
-        left_column = QWidget()
-        left_layout = QVBoxLayout()
-        left_layout.setSpacing(16)
-        left_column.setLayout(left_layout)
-        
-        # Scheduler Section
-        scheduler_card = ModernCard()
-        scheduler_inner_layout = QVBoxLayout()
-        scheduler_inner_layout.setSpacing(12)
-        scheduler_card.setLayout(scheduler_inner_layout)
-        
-        title = QLabel("Scheduler")
-        title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        title.setStyleSheet(KDE_STYLES['label_title'])
-        scheduler_inner_layout.addWidget(title)
-        
-        scheduler_form = QFormLayout()
-        scheduler_form.setSpacing(8)
-        scheduler_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
-        scheduler_inner_layout.addLayout(scheduler_form)
-        
-        self.cycle_interval = QSpinBox()
-        self.cycle_interval.setRange(1, 3600)
-        self.cycle_interval.setValue(60)
-        self.cycle_interval.setSuffix(" seconds")
-        self.cycle_interval.setStyleSheet(KDE_STYLES['input'])
-        scheduler_form.addRow("Cycle Interval:", self.cycle_interval)
-        
-
-        self.run_cycle = QCheckBox("Enable cycle task (runs every interval)")
-        self.run_cycle.setChecked(True)
-        self.run_cycle.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_inner_layout.addWidget(self.run_cycle)
-
-        self.daily_shuffle_enabled = QCheckBox("Enable daily theme shuffle")
-        self.daily_shuffle_enabled.setChecked(True)
-        self.daily_shuffle_enabled.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_inner_layout.addWidget(self.daily_shuffle_enabled)
-        
-        left_layout.addWidget(scheduler_card)
-        
-        # Location Section
-        location_card = ModernCard()
-        location_inner_layout = QVBoxLayout()
-        location_inner_layout.setSpacing(12)
-        location_card.setLayout(location_inner_layout)
-        
-        title = QLabel("Location")
-        title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        title.setStyleSheet(KDE_STYLES['label_title'])
-        location_inner_layout.addWidget(title)
-        
-        location_form = QFormLayout()
-        location_form.setSpacing(8)
-        location_form.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
-        location_inner_layout.addLayout(location_form)
-        
-        self.timezone = QLineEdit("America/Phoenix")
-        self.timezone.setStyleSheet(KDE_STYLES['input'])
-        location_form.addRow("Timezone:", self.timezone)
-        
-        self.latitude = QDoubleSpinBox()
-        self.latitude.setRange(-90, 90)
-        self.latitude.setValue(33.4484)
-        self.latitude.setDecimals(4)
-        self.latitude.setStyleSheet(KDE_STYLES['input'])
-        location_form.addRow("Latitude:", self.latitude)
-        
-        self.longitude = QDoubleSpinBox()
-        self.longitude.setRange(-180, 180)
-        self.longitude.setValue(-112.074)
-        self.longitude.setDecimals(4)
-        self.longitude.setStyleSheet(KDE_STYLES['input'])
-        location_form.addRow("Longitude:", self.longitude)
-        
-        left_layout.addWidget(location_card)
-        
-        # Application Settings Section
-        app_settings_card = ModernCard()
-        app_settings_inner_layout = QFormLayout()
-        app_settings_inner_layout.setSpacing(8)
-        app_settings_inner_layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
-        app_settings_card.setLayout(app_settings_inner_layout)
-        
-        app_title = QLabel("Application Settings")
-        app_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        app_settings_inner_layout.addWidget(app_title)
-        
-        self.theme_mode = QComboBox()
-        self.theme_mode.addItems(["Light Mode", "Dark Mode"])
-        self.theme_mode.setStyleSheet(KDE_STYLES['input'])
-        self.theme_mode.currentIndexChanged.connect(self._on_theme_changed)
-        app_settings_inner_layout.addRow("Theme Mode:", self.theme_mode)
-        
-        left_layout.addWidget(app_settings_card)
-        
-        left_column.setFixedWidth(350)
-        main_layout.addWidget(left_column)
-        
-        # Right column - blank for future settings
-        right_column = QWidget()
-        right_column.setStyleSheet("background-color: #eff0f1;")
-        right_column.setMinimumWidth(300)
-        main_layout.addWidget(right_column)
-        
-        # Save Button
-        self.save_button = QPushButton("Save Settings")
-        self.save_button.clicked.connect(self._save_settings)
-        self.save_button.setStyleSheet(KDE_STYLES['button_primary'])
-        main_layout.addWidget(self.save_button)
-        
-        main_layout.addStretch()
-        self._load_config()
-        
-        # Load and apply theme mode after UI is fully initialized
-        self._load_theme_mode()
-        
-    def _load_theme_mode(self):
-        """Load the saved theme mode from config."""
-        try:
-            from kwallpaper.wallpaper_changer import load_config
-            config = load_config(self.config_path)
-            app_config = config.get('application', {})
-            theme_mode = app_config.get('theme_mode', 'light')
-            
-            # Set combo box to correct index
-            if theme_mode == 'dark':
-                self.theme_mode.setCurrentIndex(1)
-            else:
-                self.theme_mode.setCurrentIndex(0)
-                
-            # Apply the theme
-            self._apply_theme_mode(theme_mode)
-        except Exception as e:
-            logger.warning(f"Failed to load theme mode: {e}")
-    
-    def _on_theme_changed(self, index: int):
-        """Handle theme mode change."""
-        from kwallpaper.wallpaper_changer import load_config, save_config
-        
-        theme_mode = "dark" if index == 1 else 'light'
-        
-        # Load current config
-        config = load_config(self.config_path)
-        
-        # Update theme mode in config
-        if 'application' not in config:
-            config['application'] = {}
-        config['application']['theme_mode'] = theme_mode
-        
-        # Save config
-        save_config(self.config_path, config)
-        
-        # Apply the theme
-        self._apply_theme_mode(theme_mode)
-    
-    def _apply_theme_mode(self, theme_mode: str):
-        """Apply the selected theme mode to all widgets."""
-        colors = KDE_COLORS[theme_mode]
-        
-        # Update all styles with current colors
-        self._update_all_styles(colors)
-        
-        # Update the window background
-        self.setStyleSheet(f"background-color: {colors['background']}")
-        
-        # Re-apply styles to all widgets
-        self._reapply_styles_to_widgets(colors)
-    
-
-    def _get_tab_widget_style(self, colors: dict) -> str:
-        return f"""
-            QTabWidget::pane {{
-                border: 1px solid {colors['border']};
-                border-radius: 8px;
-                background-color: {colors['panel']};
-            }}
-            QTabBar::tab {{
-                background-color: {colors['panel']};
-                color: {colors['text_primary']};
-                padding: 8px 16px;
-                border: 1px solid {colors['border']};
-                border-bottom: none;
-                border-top-left-radius: 6px;
-                border-top-right-radius: 6px;
-                margin-right: 2px;
-            }}
-            QTabBar::tab:hover {{
-                background-color: {colors['background']};
-            }}
-            QTabBar::tab:selected {{
-                background-color: {colors['panel']};
-                color: {colors['accent']};
-                border-bottom: 2px solid {colors['accent']};
-            }}
-        """
-    
-    def _get_scroll_area_style(self, colors: dict) -> str:
-        return f"""
-            QScrollArea {{
-                border: none;
-                background-color: {colors['background']};
-            }}
-            QScrollArea > QWidget > QWidget {{
-                background-color: {colors['background']};
-            }}
-        """
-    
-    def _get_label_title_style(self, colors: dict) -> str:
-        return f"""
-            QLabel {{
-                color: {colors['text_primary']};
-                font-weight: 600;
-                font-size: 14px;
-            }}
-        """
-    
-    def _get_label_subtitle_style(self, colors: dict) -> str:
-        return f"""
-            QLabel {{
-                color: {colors['text_secondary']};
-                font-size: 12px;
-            }}
-        """
-    def _reapply_styles_to_widgets(self, colors: dict):
-        """Reapply styles to all child widgets."""
-        for card in self.findChildren(QFrame):
-            card.setStyleSheet(KDE_STYLES['card'])
-        
-        for widget in self.findChildren((QLineEdit, QSpinBox, QDoubleSpinBox)):
-            widget.setStyleSheet(KDE_STYLES['input'])
-        
-        for widget in self.findChildren(QCheckBox):
-            widget.setStyleSheet(KDE_STYLES['checkbox'])
-        
-        for widget in self.findChildren(QLabel):
-            widget.setStyleSheet(f"color: {colors['text_primary']}")
-        
-        for widget in self.findChildren(QPushButton):
-            if widget.text() == "Save Settings":
-                widget.setStyleSheet(KDE_STYLES['button_primary'])
-            else:
-                widget.setStyleSheet(KDE_STYLES['button_secondary'])
-
-    def _get_card_style(self, colors: dict) -> str:
-        return f"""
-            QFrame {{
-                background-color: {colors['panel']};
-                border: 1px solid {colors['border']};
-                border-radius: 8px;
-                padding: 16px;
-            }}
-            QFrame:hover {{
-                border: 1px solid {colors['accent']};
-            }}
-        """
-    
-    def _get_button_primary_style(self, colors: dict) -> str:
-        return f"""
-            QPushButton {{
-                background-color: {colors['accent']};
-                color: white;
-                border: none;
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {colors['accent_hover']};
-            }}
-            QPushButton:pressed {{
-                background-color: {colors['accent_active']};
-            }}
-        """
-    
-    def _get_button_secondary_style(self, colors: dict) -> str:
-        return f"""
-            QPushButton {{
-                background-color: {colors['panel']};
-                color: {colors['text_primary']};
-                border: 1px solid {colors['border']};
-                border-radius: 6px;
-                padding: 8px 16px;
-                font-weight: 500;
-            }}
-            QPushButton:hover {{
-                background-color: {colors['background']};
-                border: 1px solid {colors['accent']};
-            }}
-        """
-    
-    def _get_input_style(self, colors: dict) -> str:
-        return f"""
-            QLineEdit, QSpinBox, QDoubleSpinBox {{
-                background-color: {colors['panel']};
-                border: 1px solid {colors['border']};
-                border-radius: 4px;
-                padding: 6px 10px;
-                color: {colors['text_primary']};
-                min-height: 28px;
-            }}
-            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
-                border: 2px solid {colors['accent']};
-                padding: 5px 9px;
-            }}
-        """
-    
-    def _get_checkbox_style(self, colors: dict) -> str:
-        return f"""
-            QCheckBox {{
-                spacing: 8px;
-                color: {colors['text_primary']};
-            }}
-            QCheckBox::indicator {{
-                width: 18px;
-                height: 18px;
-                border-radius: 3px;
-                border: 1px solid {colors['border']};
-                background-color: {colors['panel']};
-            }}
-            QCheckBox::indicator:hover {{
-                border: 1px solid {colors['accent']};
-            }}
-            QCheckBox::indicator:checked {{
-                background-color: {colors['accent']};
-                border: 1px solid {colors['accent']};
-            }}
-        """
-    
-    def _update_all_styles(self, colors: dict):
-        # Update all style dictionaries with actual color values
-        KDE_STYLES['card'] = self._get_card_style(colors)
-        KDE_STYLES['button_primary'] = self._get_button_primary_style(colors)
-        KDE_STYLES['button_secondary'] = self._get_button_secondary_style(colors)
-        KDE_STYLES['input'] = self._get_input_style(colors)
-        KDE_STYLES['checkbox'] = self._get_checkbox_style(colors)
-        KDE_STYLES['tab_widget'] = self._get_tab_widget_style(colors)
-        KDE_STYLES['scroll_area'] = self._get_scroll_area_style(colors)
-        KDE_STYLES['label_title'] = self._get_label_title_style(colors)
-        KDE_STYLES['label_subtitle'] = self._get_label_subtitle_style(colors)
-
-    def _load_config(self):
-        try:
-            config = load_config(self.config_path)
-            scheduling = config.get('scheduling', {})
-            self.cycle_interval.setValue(scheduling.get('interval', 60))
-            self.daily_shuffle_enabled.setChecked(scheduling.get('daily_shuffle_enabled', True))
-            self.run_cycle.setChecked(scheduling.get('run_cycle', True))
-            
-            location = config.get('location', {})
-            self.timezone.setText(location.get('timezone', 'America/Phoenix'))
-            self.latitude.setValue(location.get('latitude', 33.4484))
-            self.longitude.setValue(location.get('longitude', -112.074))
-            
-        except Exception as e:
-            logger.warning(f"Failed to load config: {e}")
-            
-    def _save_settings(self):
-        try:
-            config = load_config(self.config_path)
-            
-            config['scheduling'] = {
-                'interval': self.cycle_interval.value(),
-                'daily_shuffle_enabled': self.daily_shuffle_enabled.isChecked(),
-                'run_cycle': self.run_cycle.isChecked()
-            }
-            
-            config['location'] = {
-                'timezone': self.timezone.text(),
-                'latitude': self.latitude.value(),
-                'longitude': self.longitude.value()
-            }
-            
-            save_config(self.config_path, config)
-            logger.info("Settings saved successfully")
-            
-        except Exception as e:
-            logger.error(f"Failed to save settings: {e}")
-
-
-class ThemeListWidget(QListWidget):
-    """List widget for displaying themes."""
-    
-    theme_selected = pyqtSignal(str)
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QListWidget {
-                background-color: #ffffff;
-                border: 1px solid #d0d0d0;
-                border-radius: 6px;
-                padding: 5px;
-            }
-            QListWidget::item {
-                padding: 10px;
-                border-bottom: 1px solid #e0e0e0;
-            }
-            QListWidget::item:hover {
-                background-color: #e8f4fc;
-            }
-            QListWidget::item:selected {
-                background-color: #0088cc;
-                color: white;
-            }
-        """)
-        
-    def load_themes(self):
-        """Load all themes into the list."""
-        self.clear()
-        
-        try:
-            themes = discover_themes()
-            themes.sort(key=lambda x: x[0].lower())
-            
-            for theme_name, theme_path in themes:
-                item = QListWidgetItem(theme_name)
-                item.setData(Qt.ItemDataRole.UserRole, theme_path)
-                self.addItem(item)
-                
-            logger.info(f"Loaded {len(themes)} themes")
-            
-        except Exception as e:
-            logger.error(f"Failed to load themes: {e}")
-
-
-class ThemePreviewWidget(QWidget):
-    """Widget to display theme preview."""
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._init_ui()
-        
-    def _init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(5)
-        layout.setContentsMargins(10, 10, 10, 10)
-        self.setLayout(layout)
-        
-        # Small title at top
-        title = QLabel("Theme Preview")
-        title.setFont(QFont("Arial", 10, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet("color: #0088cc; margin: 5px;")
-        layout.addWidget(title)
-        
-        # Large preview area - takes most vertical space
-        self.preview_label = QLabel("Select a theme to preview")
-        self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.preview_label.setMinimumHeight(400)
-        from PyQt6.QtWidgets import QSizePolicy
-        self.preview_label.setSizePolicy(
-            QSizePolicy.Policy.Expanding,
-            QSizePolicy.Policy.Expanding
-        )
-        self.preview_label.setStyleSheet("""
-            QLabel {
-                background-color: #f5f5f5;
-                border: 2px dashed #ccc;
-                border-radius: 8px;
-                padding: 20px;
-            }
-        """)
-        layout.addWidget(self.preview_label)
-        
-    def load_preview(self, theme_path: str):
-        """Load preview for given theme."""
-        try:
-            theme_json = None
-            for f in Path(theme_path).glob("*.json"):
-                theme_json = f
-                break
-                
-            if not theme_json:
-                self.preview_label.setText("No theme.json found")
-                return
-                
-            with open(theme_json, 'r') as f:
-                theme_data = json.load(f)
-                
-            # Get first image from each category
-            images = []
-            for category in ['sunrise', 'day', 'sunset', 'night']:
-                img_list = theme_data.get(f'{category}ImageList', [])
-                if img_list:
-                    img_file = self._find_image_file(theme_path, img_list[0])
-                    if img_file:
-                        images.append(img_file)
-                    break
-                    
-            if not images:
-                self.preview_label.setText("No images found in theme")
-                return
-                
-            # Show first image
-            pixmap = QPixmap(images[0])
-            if pixmap.isNull():
-                self.preview_label.setText("Could not load preview image")
-            else:
-                # Scale to fit while maintaining aspect ratio
-                scaled = pixmap.scaled(self.preview_label.size(),
-                                       Qt.AspectRatioMode.KeepAspectRatio,
-                                       Qt.TransformationMode.SmoothTransformation)
-                self.preview_label.setPixmap(scaled)
-                
-        except Exception as e:
-            logger.error(f"Failed to load preview: {e}")
-            self.preview_label.setText(f"Error loading preview: {e}")
-            
-    def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
-        theme_path = Path(theme_path)
-        all_images = list(theme_path.glob("*.jpeg")) + list(theme_path.glob("*.jpg"))
-        
-        def get_index(f):
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    return int(num_part)
-            except (ValueError, IndexError):
-                pass
-            return 0
-            
-        all_images.sort(key=get_index)
-        
-        for f in all_images:
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    if int(num_part) == index:
-                        return str(f)
-            except (ValueError, IndexError):
-                pass
-                
-        return None
-
-
+# ═════════════════════════════════════════════════════════════════════════════
+#  Widgets
+# ═════════════════════════════════════════════════════════════════════════════
 
 class ImageCrossFadeWidget(QWidget):
-    """Widget that smoothly cross-fades between multiple images."""
-    
+    """Custom-painted widget that smoothly cross-fades between images."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._images: list[str] = []
-        self._blend_value = 0.0
-        self._current_image_index = 0
-        self._pixmap_cache: dict[int, QPixmap] = {}
-        
-        # Title label
-        self.title_label = QLabel("Theme Preview")
-        self.title_label.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet("""
-            QLabel {
-                color: #0088cc;
-                padding: 15px;
-                background-color: #f5f5f5;
-                border-radius: 8px;
-                margin: 5px;
-            }
-        """)
-        
-        # Animation for cross-fade
-        self._animation = QPropertyAnimation(self, b'blend')
-        self._animation.setDuration(800)  # 0.8 seconds fade
-        self._animation.setEasingCurve(QEasingCurve.Type.Linear)
-        self._animation.finished.connect(self._on_animation_finished)
-        
-        # Auto-advance timer - will be controlled by tab visibility
+        self._blend: float = 0.0
+        self._idx: int = 0
+        self._cache: dict[int, QPixmap] = {}
+
+        self.setAutoFillBackground(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding,
+                           QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(320, 200)
+
+        # Cross-fade animation
+        self._anim = QPropertyAnimation(self, b"blendValue")
+        self._anim.setDuration(800)
+        self._anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        self._anim.finished.connect(self._on_fade_done)
+
+        # Auto-advance timer
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._advance_image)
-        self._timer.setSingleShot(False)
-        
-        self.setMinimumSize(800, 450)
-        
-        # Store parent tab widget for visibility tracking
-        self._parent_tab = None
-        self._is_visible = False  # Start as not visible
-        
+        self._timer.setInterval(3500)
+        self._timer.timeout.connect(self._advance)
+
+    # -- animated property -----------------------------------------------------
     @pyqtProperty(float)
-    def blend(self) -> float:
-        """Get current blend value (0.0 to 1.0)."""
-        return self._blend_value
-        
-    @blend.setter
-    def blend(self, value: float):
-        """Set current blend value and trigger repaint."""
-        self._blend_value = value
+    def blendValue(self) -> float:
+        return self._blend
+
+    @blendValue.setter
+    def blendValue(self, v: float):
+        self._blend = v
         self.update()
-        
-    def set_images(self, image_paths: list[str]):
-        """Set the list of images to cross-fade between."""
-        self._images = image_paths
-        self._current_image_index = 0
-        self._pixmap_cache.clear()
-        
-        # Pre-cache first two images
-        if len(self._images) >= 1:
-            self._load_pixmap(0)
-        if len(self._images) >= 2:
-            self._load_pixmap(1)
-            
-        self._blend_value = 0.0
+
+    # -- public API ------------------------------------------------------------
+    def set_images(self, paths: list[str]):
+        """Load a new set of image paths and reset the slideshow."""
+        self._timer.stop()
+        self._anim.stop()
+        self._images = paths
+        self._idx = 0
+        self._blend = 0.0
+        self._cache.clear()
+        for i in range(min(2, len(paths))):
+            self._ensure(i)
         self.update()
-        
-    def _load_pixmap(self, index: int):
-        """Load and cache a pixmap for a given index."""
-        if index < 0 or index >= len(self._images):
+
+    def start(self):
+        if len(self._images) > 1:
+            self._timer.start()
+
+    def stop(self):
+        self._timer.stop()
+        self._anim.stop()
+
+    # -- internals -------------------------------------------------------------
+    def _ensure(self, idx: int):
+        if idx in self._cache or not (0 <= idx < len(self._images)):
             return
-            
-        if index in self._pixmap_cache:
-            return
-            
-        # Clear old cache entries to limit memory usage
-        # Only keep current and next image in cache
-        current_index = self._current_image_index
-        next_index = (current_index + 1) % len(self._images)
-        
-        # Clear all entries except current and next
-        keys_to_keep = {current_index, next_index}
-        keys_to_remove = [k for k in self._pixmap_cache if k not in keys_to_keep]
-        for k in keys_to_remove:
-            del self._pixmap_cache[k]
-            
-        image_path = self._images[index]
-        pixmap = QPixmap(image_path)
-        if not pixmap.isNull():
-            self._pixmap_cache[index] = pixmap
-            
-    def _advance_image(self):
-        """Advance to next image in the sequence."""
+        pm = QPixmap(self._images[idx])
+        if not pm.isNull():
+            self._cache[idx] = pm
+
+    def _advance(self):
         if len(self._images) < 2:
             return
-            
-        # Start animation to fade out current image
-        self._animation.stop()
-        self._animation.setStartValue(self._blend_value)
-        self._animation.setEndValue(1.0)
-        self._animation.start()
-        
-    def _on_animation_finished(self):
-        """Handle animation completion - switch to next image."""
-        self._current_image_index = (self._current_image_index + 1) % len(self._images)
-        self._blend_value = 0.0
-        
-        # Pre-cache next image
-        next_index = (self._current_image_index + 1) % len(self._images)
-        self._load_pixmap(next_index)
-        
+        nxt = (self._idx + 1) % len(self._images)
+        self._ensure(nxt)
+        self._anim.stop()
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(1.0)
+        self._anim.start()
+
+    def _on_fade_done(self):
+        old = self._idx
+        self._idx = (self._idx + 1) % len(self._images)
+        self._blend = 0.0
+        # Evict old pixmap to limit memory
+        if old != self._idx and old in self._cache:
+            del self._cache[old]
+        self._ensure((self._idx + 1) % len(self._images))
         self.update()
-        
+
     def paintEvent(self, event):
-        """Paint event for cross-fading images."""
-        if not self._images:
-            return
-            
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        
-        # Get widget size
-        widget_size = self.size()
-        
-        # Get current and next image pixmaps
-        current_pixmap = self._pixmap_cache.get(self._current_image_index)
-        next_index = (self._current_image_index + 1) % len(self._images)
-        next_pixmap = self._pixmap_cache.get(next_index)
-        
-        if current_pixmap is None:
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        pal = self.palette()
+        sz = self.size()
+
+        if not self._images:
+            # Draw dashed placeholder
+            pen = QPen(pal.color(QPalette.ColorRole.Mid))
+            pen.setStyle(Qt.PenStyle.DashLine)
+            pen.setWidth(2)
+            painter.setPen(pen)
+            painter.drawRoundedRect(
+                self.rect().adjusted(8, 8, -8, -8), 8, 8)
+            painter.setPen(pal.color(QPalette.ColorRole.PlaceholderText))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Select a theme to preview")
+            painter.end()
             return
-            
-        # Scale images to fit widget while maintaining aspect ratio
-        scaled_current = self._scale_pixmap(current_pixmap, widget_size)
-        
-        if next_pixmap is not None:
-            scaled_next = self._scale_pixmap(next_pixmap, widget_size)
-        else:
-            scaled_next = scaled_current
-            
-        # Calculate position to center the image
-        x = (widget_size.width() - scaled_current.width()) // 2
-        y = (widget_size.height() - scaled_current.height()) // 2
-        
-        # Draw title above the image
-        title_height = 50  # Height of title area
-        title_y = 10
-        title_width = widget_size.width()
-        title_rect = QRectF(0, title_y, title_width, title_height)
-        painter.setOpacity(1.0)
-        painter.drawText(title_rect, Qt.AlignmentFlag.AlignCenter, self.title_label.text())
-        
-        # Draw separator line below title
-        painter.setOpacity(1.0)
-        painter.setPen(QPen(QColor("#d0d0d0"), 1))
-        separator_y = title_y + title_height - 5
-        painter.drawLine(0, separator_y, widget_size.width(), separator_y)
-        
-        # Draw current image below title (fades out as blend goes from 0 to 1)
-        image_y = separator_y + 10
-        painter.setOpacity(1.0 - self._blend_value)
-        painter.drawPixmap(x, image_y + y, scaled_current)
-        
-        # Draw next image (fades in as blend goes from 0 to 1)
-        painter.setOpacity(self._blend_value)
-        if next_pixmap is not None:
-            painter.drawPixmap(x, image_y + y, scaled_next)
-            
-    def _scale_pixmap(self, pixmap: QPixmap, target_size: tuple[int, int]) -> QPixmap:
-        """Scale pixmap to fit target size while maintaining aspect ratio."""
-        return pixmap.scaled(
-            target_size,
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-        
-    def set_visible(self, visible: bool):
-        """Control timer based on visibility."""
-        if visible:
-            self._timer.start(3000)
-            self._is_visible = True
-        else:
-            self._timer.stop()
-            self._is_visible = False
-            # Clear pixmap cache when not visible to free memory
-            self._pixmap_cache.clear()
+
+        cur = self._cache.get(self._idx)
+        if cur is None:
+            painter.end()
+            return
+
+        sc = cur.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        cx = (sz.width()  - sc.width())  // 2
+        cy = (sz.height() - sc.height()) // 2
+        painter.setOpacity(1.0 - self._blend)
+        painter.drawPixmap(cx, cy, sc)
+
+        if self._blend > 0.001:
+            nxt = self._cache.get(
+                (self._idx + 1) % len(self._images))
+            if nxt:
+                sn = nxt.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
+                                Qt.TransformationMode.SmoothTransformation)
+                nx = (sz.width()  - sn.width())  // 2
+                ny = (sz.height() - sn.height()) // 2
+                painter.setOpacity(self._blend)
+                painter.drawPixmap(nx, ny, sn)
+
+        painter.end()
 
 
-class ThemesTab(QWidget):
-    """Themes tab showing all imported themes - KDE 6 Plasma design."""
-    
-    def __init__(self, config_path: Optional[str] = None, parent=None):
+# ═════════════════════════════════════════════════════════════════════════════
+#  Pages (tabs)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class ThemesPage(QWidget):
+    """Browse, preview, import, and apply wallpaper themes."""
+
+    def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
-        self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
-        self._init_ui()
-        
-    def _init_ui(self):
-        layout = QHBoxLayout()
-        layout.setSpacing(16)
-        layout.setContentsMargins(16, 16, 16, 16)
-        self.setLayout(layout)
-        
-        # Left column - theme list (30% width)
-        left_panel = QWidget()
-        left_layout = QVBoxLayout()
-        left_panel.setLayout(left_layout)
-        
-        # Header
-        header = QLabel("Themes")
-        header.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        header.setStyleSheet(KDE_STYLES['label_title'])
-        left_layout.addWidget(header)
-        
-        header_desc = QLabel("Select a theme to preview")
-        header_desc.setFont(QFont("Noto Sans", 11))
-        header_desc.setStyleSheet(KDE_STYLES['label_subtitle'])
-        left_layout.addWidget(header_desc)
-        
-        self.theme_list = ThemeListWidget()
-        self.theme_list.theme_selected.connect(self._on_theme_selected)
-        self.theme_list.itemSelectionChanged.connect(self._on_selection_changed)
-        self.theme_list.setStyleSheet("""
-            QListWidget {
-                background-color: #ffffff;
-                border: 1px solid #d3d6d9;
-                border-radius: 6px;
-                padding: 8px;
-                outline: none;
-            }
-            QListWidget::item {
-                padding: 8px 12px;
-                border-radius: 4px;
-                margin-bottom: 2px;
-            }
-            QListWidget::item:hover {
-                background-color: #e0e3e6;
-            }
-            QListWidget::item:selected {
-                background-color: #0082FC;
-                color: white;
-            }
-        """)
-        left_layout.addWidget(self.theme_list)
-        
-        # Import button
-        self.import_button = QPushButton("Import Theme File")
-        self.import_button.clicked.connect(self._import_theme)
-        self.import_button.setStyleSheet(KDE_STYLES['button_secondary'])
-        left_layout.addWidget(self.import_button)
-        
-        left_panel.setFixedWidth(300)
-        layout.addWidget(left_panel)
-        
-        # Right panel - preview (70% width)
-        self.preview_widget = ImageCrossFadeWidget()
-        self.preview_widget.setStyleSheet("background-color: #eff0f1;")
-        layout.addWidget(self.preview_widget)
-        
-        # Apply button (bottom right)
-        apply_button = QPushButton("Apply")
-        apply_button.clicked.connect(self._apply_theme)
-        apply_button.setFont(QFont("Noto Sans", 12, QFont.Weight.Bold))
-        apply_button.setStyleSheet(KDE_STYLES['button_primary'])
-        apply_button.setFixedHeight(40)
-        left_layout.addWidget(apply_button)
-        
-        # Track tab visibility to control preview timer
-        # Store reference to check later when tab widget is fully set up
-        self._pending_tab_check = True
-        
-    def _check_initial_tab_visibility(self):
-        """Check if this tab is visible and start timer if so."""
-        if not self._pending_tab_check:
-            return
-        self._pending_tab_check = False
-        
-        parent_tab_widget = self.parentWidget()
-        if parent_tab_widget and hasattr(parent_tab_widget, 'currentChanged'):
-            parent_tab_widget.currentChanged.connect(self._on_tab_changed)
-            # Check if this tab is initially visible
-            current_index = parent_tab_widget.currentIndex()
-            for i in range(parent_tab_widget.count()):
-                if parent_tab_widget.widget(i) is self:
-                    self.preview_widget.set_visible(i == current_index)
-                    break
-        
-        # Load themes
-        self.theme_list.load_themes()
-        
-        # Select first theme if available
-        if self.theme_list.count() > 0:
-            self.theme_list.setCurrentRow(0)
-            # Trigger preview update
-            current_item = self.theme_list.currentItem()
-            if current_item:
-                theme_path = current_item.data(Qt.ItemDataRole.UserRole)
-                images = self._load_theme_images(theme_path)
-                self.preview_widget.set_images(images)
-        
-    def _on_tab_changed(self, index: int):
-        """Handle tab change to control preview timer based on visibility."""
-        parent_tab_widget = self.parentWidget()
-        if not parent_tab_widget or not hasattr(parent_tab_widget, 'currentIndex'):
-            return
-        
-        current_index = parent_tab_widget.currentIndex()
-        # Find which tab index this ThemesTab is at
-        if hasattr(parent_tab_widget, 'count'):
-            for i in range(parent_tab_widget.count()):
-                if parent_tab_widget.widget(i) is self:
-                    # This is the ThemesTab
-                    is_visible = i == current_index
-                    self.preview_widget.set_visible(is_visible)
-                    # If tab became visible, refresh the preview for current selection
-                    if is_visible:
-                        current_item = self.theme_list.currentItem()
-                        if current_item:
-                            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
-                            images = self._load_theme_images(theme_path)
-                            self.preview_widget.set_images(images)
-                    break
-        
-    def _on_selection_changed(self):
-        """Handle theme selection change."""
-        current_item = self.theme_list.currentItem()
-        if current_item:
-            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
-            images = self._load_theme_images(theme_path)
-            self.preview_widget.set_images(images)
-            
-    def _on_theme_selected(self, theme_path: str):
-        """Handle theme selected signal."""
-        images = self._load_theme_images(theme_path)
-        self.preview_widget.set_images(images)
-        
-    def _import_theme(self):
-        """Import a theme file."""
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select Theme File",
-            "",
-            "Theme Files (*.ddw *.zip);;All Files (*)"
-        )
-        
-        if file_path:
-            try:
-                result = extract_theme(file_path, cleanup=False)
-                logger.info(f"Theme imported: {result['extract_dir']}")
-                self.theme_list.load_themes()
-            except Exception as e:
-                logger.error(f"Failed to import theme: {e}")
-    
-    def _apply_theme(self):
-        """Apply the currently selected theme."""
-        current_item = self.theme_list.currentItem()
-        if current_item:
-            theme_name = current_item.text()
-            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
-            
-            # Extract the folder name from the theme path
-            from pathlib import Path
-            folder_name = Path(theme_path).name
-            
-            # Import and run change command
-            try:
-                from kwallpaper.wallpaper_changer import run_change_command
-                from types import SimpleNamespace
-                
-                args = SimpleNamespace(
-                    theme_path=folder_name,
-                    config=self.config_path,
-                    monitor=False,
-                    time=None
-                )
-                result = run_change_command(args)
-                
-                if result == 0:
-                    logger.info(f"Theme '{theme_name}' applied successfully")
-                else:
-                    logger.error(f"Failed to apply theme '{theme_name}'")
-            except Exception as e:
-                logger.error(f"Failed to apply theme: {e}")
-        else:
-            logger.warning("No theme selected to apply")
+        self._cfg = config_path
+        self._build()
 
+    # ── construction ----------------------------------------------------------
+    def _build(self):
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
 
+        split = QSplitter(Qt.Orientation.Horizontal)
+        split.setChildrenCollapsible(False)
+        root.addWidget(split)
 
-    def _load_theme_images(self, theme_path: str) -> list[str]:
-        """Extract images from theme for cross-fade preview (images 1-16, sorted)."""
-        images = []
+        # Left: theme list + buttons
+        left = QWidget()
+        lv = QVBoxLayout(left)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.setSpacing(6)
+
+        self.theme_list = QListWidget()
+        self.theme_list.setAlternatingRowColors(True)
+        self.theme_list.currentItemChanged.connect(self._on_select)
+        lv.addWidget(self.theme_list)
+
+        brow = QHBoxLayout()
+        brow.setSpacing(6)
+        self.import_btn = QPushButton(
+            QIcon.fromTheme("document-import"), "Import…")
+        self.import_btn.setToolTip("Import a .ddw or .zip theme file")
+        self.import_btn.clicked.connect(self._import)
+        brow.addWidget(self.import_btn)
+
+        self.apply_btn = QPushButton(
+            QIcon.fromTheme("dialog-ok-apply"), "Apply")
+        self.apply_btn.setToolTip(
+            "Set the selected theme as your wallpaper")
+        self.apply_btn.setEnabled(False)
+        self.apply_btn.clicked.connect(self._apply)
+        brow.addWidget(self.apply_btn)
+        lv.addLayout(brow)
+
+        split.addWidget(left)
+
+        # Right: cross-fade preview
+        right = QWidget()
+        rv = QVBoxLayout(right)
+        rv.setContentsMargins(0, 0, 0, 0)
+        rv.setSpacing(4)
+
+        self.preview = ImageCrossFadeWidget()
+        rv.addWidget(self.preview, 1)
+
+        self.info = QLabel()
+        self.info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rv.addWidget(self.info)
+
+        split.addWidget(right)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 3)
+        split.setSizes([280, 700])
+
+    # ── public ----------------------------------------------------------------
+    def load_themes(self):
+        self.theme_list.clear()
         try:
-            theme_json = None
-            for f in Path(theme_path).glob("*.json"):
-                theme_json = f
-                break
-                
-            if not theme_json:
-                return images
-                
-            with open(theme_json, 'r') as f:
-                theme_data = json.load(f)
-                
-            # Get images 1-16 from all categories, sorted by index
-            all_image_indices = []
-            for category in ['sunrise', 'day', 'sunset', 'night']:
-                img_list = theme_data.get(f'{category}ImageList', [])
-                for img_index in img_list:
-                    # Only include images 1-16
-                    if 1 <= img_index <= 16:
-                        all_image_indices.append(img_index)
-            
-            # Sort indices and get unique values
-            all_image_indices = sorted(set(all_image_indices))
-            
-            # Get image files in sorted order
-            for img_index in all_image_indices:
-                img_file = self._find_image_file(theme_path, img_index)
-                if img_file and img_file not in images:
-                    images.append(img_file)
-                        
+            for name, path in sorted(discover_themes(),
+                                     key=lambda t: t[0].lower()):
+                it = QListWidgetItem(name)
+                it.setData(Qt.ItemDataRole.UserRole, path)
+                self.theme_list.addItem(it)
+            if self.theme_list.count():
+                self.theme_list.setCurrentRow(0)
         except Exception as e:
-            logger.error(f"Failed to load theme images: {e}")
-            
-        # Debug: log the images being loaded
-        logger.info(f"Loaded {len(images)} images for preview: {all_image_indices}")
-            
-        return images
+            logger.error(f"Theme discovery failed: {e}")
 
-    def _find_image_file(self, theme_path: str, index: int) -> Optional[str]:
-        """Find image file by index in theme directory."""
-        theme_path = Path(theme_path)
-        all_images = list(theme_path.glob("*.jpeg")) + list(theme_path.glob("*.jpg"))
-        
-        def get_index(f):
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    return int(num_part)
-            except (ValueError, IndexError):
-                pass
-            return 0
-            
-        all_images.sort(key=get_index)
-        
-        for f in all_images:
-            try:
-                stem = f.stem
-                if '_' in stem:
-                    num_part = stem.split('_')[-1]
-                    if int(num_part) == index:
+    def set_tab_visible(self, vis: bool):
+        """Start/stop the preview slideshow based on tab visibility."""
+        if vis:
+            cur = self.theme_list.currentItem()
+            if cur:
+                self.preview.set_images(
+                    self._images_for(
+                        cur.data(Qt.ItemDataRole.UserRole)))
+            self.preview.start()
+        else:
+            self.preview.stop()
+
+    # ── slots -----------------------------------------------------------------
+    def _on_select(self, cur, _prev):
+        if cur is None:
+            self.apply_btn.setEnabled(False)
+            self.preview.set_images([])
+            self.info.clear()
+            return
+        self.apply_btn.setEnabled(True)
+        imgs = self._images_for(cur.data(Qt.ItemDataRole.UserRole))
+        self.preview.set_images(imgs)
+        self.preview.start()
+        self.info.setText(f"{len(imgs)} images")
+
+    def _import(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Theme", "",
+            "Theme Files (*.ddw *.zip);;All Files (*)")
+        if not path:
+            return
+        try:
+            extract_theme(path, cleanup=False)
+            self.load_themes()
+            self._status("Theme imported successfully")
+        except Exception as e:
+            logger.error(f"Import failed: {e}")
+            QMessageBox.warning(self, "Import Failed", str(e))
+
+    def _apply(self):
+        cur = self.theme_list.currentItem()
+        if not cur:
+            return
+        name   = cur.text()
+        folder = Path(cur.data(Qt.ItemDataRole.UserRole)).name
+        try:
+            from kwallpaper.wallpaper_changer import run_change_command
+            from types import SimpleNamespace
+            rc = run_change_command(SimpleNamespace(
+                theme_path=folder, config=self._cfg,
+                monitor=False, time=None))
+            self._status(
+                f"Applied: {name}" if rc == 0
+                else f"Failed to apply: {name}")
+        except Exception as e:
+            logger.error(f"Apply failed: {e}")
+            QMessageBox.warning(self, "Apply Failed", str(e))
+
+    # ── helpers ---------------------------------------------------------------
+    def _status(self, msg: str, ms: int = 5000):
+        w = self.window()
+        if isinstance(w, QMainWindow):
+            w.statusBar().showMessage(msg, ms)
+
+    def _images_for(self, theme_path: str) -> list[str]:
+        """Return sorted image file paths (indices 1-16) for a theme."""
+        result: list[str] = []
+        try:
+            jf = next(Path(theme_path).glob("*.json"), None)
+            if not jf:
+                return result
+            with open(jf) as fh:
+                data = json.load(fh)
+            idxs: set[int] = set()
+            for cat in ("sunrise", "day", "sunset", "night"):
+                for i in data.get(f"{cat}ImageList", []):
+                    if 1 <= i <= 16:
+                        idxs.add(i)
+            for i in sorted(idxs):
+                fp = self._find(theme_path, i)
+                if fp:
+                    result.append(fp)
+        except Exception as e:
+            logger.error(f"Image list error: {e}")
+        return result
+
+    @staticmethod
+    def _find(theme_dir: str, index: int) -> Optional[str]:
+        for ext in ("*.jpeg", "*.jpg", "*.png"):
+            for f in Path(theme_dir).glob(ext):
+                try:
+                    if "_" in f.stem \
+                       and int(f.stem.rsplit("_", 1)[-1]) == index:
                         return str(f)
-            except (ValueError, IndexError):
-                pass
-                
+                except (ValueError, IndexError):
+                    continue
         return None
 
-class SchedulerTab(QWidget):
-    """Scheduler tab with start/stop controls and event log - KDE 6 Plasma design."""
-    
-    def __init__(self, config_path: Optional[str] = None, parent=None):
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SettingsPage(QWidget):
+    """Scheduler, location, and appearance configuration."""
+
+    def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
-        self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
-        self.scheduler: Optional[SchedulerManager] = None
-        self._init_ui()
-        self._setup_scheduler()
-        
-    def _init_ui(self):
-        layout = QVBoxLayout()
-        layout.setSpacing(16)
-        layout.setContentsMargins(16, 16, 16, 16)
-        self.setLayout(layout)
-        
-        # Status Card
-        status_card = ModernCard()
-        status_layout = QVBoxLayout()
-        status_layout.setSpacing(12)
-        status_card.setLayout(status_layout)
-        
-        status_title = QLabel("Scheduler Status")
-        status_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        status_title.setStyleSheet(KDE_STYLES['label_title'])
-        status_layout.addWidget(status_title)
-        
-        self.status_label = QLabel("Scheduler: Stopped")
-        self.status_label.setFont(QFont("Noto Sans", 12))
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_label.setStyleSheet("""
-            QLabel {
-                padding: 20px;
-                background-color: #e8f4fc;
-                border-radius: 6px;
-                color: #0082FC;
-            }
-        """)
-        status_layout.addWidget(self.status_label)
-        
-        layout.addWidget(status_card)
-        
-        # Button Layout
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(16)
-        
-        self.start_button = QPushButton("▶ Start Scheduler")
-        self.start_button.clicked.connect(self._start_scheduler)
-        self.start_button.setFont(QFont("Noto Sans", 11))
-        self.start_button.setStyleSheet(KDE_STYLES['button_primary'])
-        button_layout.addWidget(self.start_button)
-        
-        self.stop_button = QPushButton("⏹ Stop Scheduler")
-        self.stop_button.clicked.connect(self._stop_scheduler)
-        self.stop_button.setFont(QFont("Noto Sans", 11))
-        self.stop_button.setEnabled(False)
-        self.stop_button.setStyleSheet(KDE_STYLES['button_secondary'])
-        button_layout.addWidget(self.stop_button)
-        
-        layout.addLayout(button_layout)
-        
-        # Log Card
-        log_card = ModernCard()
-        log_layout = QVBoxLayout()
-        log_layout.setSpacing(12)
-        log_card.setLayout(log_layout)
-        
-        log_title = QLabel("Event Log")
-        log_title.setFont(QFont("Noto Sans", 14, QFont.Weight.Bold))
-        log_title.setStyleSheet(KDE_STYLES['label_title'])
-        log_layout.addWidget(log_title)
-        
-        self.log_area = QTextEdit()
-        self.log_area.setReadOnly(True)
-        self.log_area.setFont(QFont("Noto Sans Mono", 10))
-        self.log_area.setStyleSheet("""
-            QTextEdit {
-                background-color: #eff0f1;
-                color: #31363b;
-                border: 1px solid #d3d6d9;
-                border-radius: 6px;
-                padding: 12px;
-                min-height: 150px;
-            }
-        """)
-        log_layout.addWidget(self.log_area)
-        
-        layout.addWidget(log_card)
-        
-    def _setup_scheduler(self):
+        self._cfg = config_path
+        self._build()
+        self._load()
+
+    def _build(self):
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll, 1)
+
+        body = QWidget()
+        col  = QVBoxLayout(body)
+        col.setSpacing(16)
+
+        # ── Scheduler ──
+        sg = QGroupBox("Scheduler")
+        sf = QFormLayout(sg)
+        self.interval = QSpinBox()
+        self.interval.setRange(1, 3600)
+        self.interval.setSuffix(" s")
+        sf.addRow("Cycle interval:", self.interval)
+        self.run_cycle = QCheckBox(
+            "Enable cycle task (runs every interval)")
+        sf.addRow(self.run_cycle)
+        self.daily_shuffle = QCheckBox("Enable daily theme shuffle")
+        sf.addRow(self.daily_shuffle)
+        col.addWidget(sg)
+
+        # ── Location ──
+        lg = QGroupBox("Location")
+        lf = QFormLayout(lg)
+        self.timezone = QLineEdit()
+        lf.addRow("Timezone:", self.timezone)
+        self.lat = QDoubleSpinBox()
+        self.lat.setRange(-90.0, 90.0)
+        self.lat.setDecimals(4)
+        lf.addRow("Latitude:", self.lat)
+        self.lon = QDoubleSpinBox()
+        self.lon.setRange(-180.0, 180.0)
+        self.lon.setDecimals(4)
+        lf.addRow("Longitude:", self.lon)
+        col.addWidget(lg)
+
+        # ── Appearance ──
+        ag = QGroupBox("Appearance")
+        af = QFormLayout(ag)
+        self.scheme = QComboBox()
+        self.scheme.addItems(["System", "Breeze Light", "Breeze Dark"])
+        self.scheme.setToolTip(
+            "Override the colour scheme or follow the system KDE theme")
+        self.scheme.currentIndexChanged.connect(self._on_scheme)
+        af.addRow("Color scheme:", self.scheme)
+        col.addWidget(ag)
+
+        col.addStretch()
+        scroll.setWidget(body)
+
+        # ── Save ──
+        row = QHBoxLayout()
+        row.addStretch()
+        self.save_btn = QPushButton(
+            QIcon.fromTheme("document-save"), "Save Settings")
+        self.save_btn.setShortcut("Ctrl+S")
+        self.save_btn.clicked.connect(self._save)
+        row.addWidget(self.save_btn)
+        outer.addLayout(row)
+
+    # ── config I/O ------------------------------------------------------------
+    def _load(self):
         try:
-            self.scheduler = create_scheduler(self.config_path)
-            logger.info("Scheduler manager initialized")
+            c   = load_config(self._cfg)
+            s   = c.get("scheduling", {})
+            loc = c.get("location", {})
+            self.interval.setValue(s.get("interval", 60))
+            self.run_cycle.setChecked(s.get("run_cycle", True))
+            self.daily_shuffle.setChecked(
+                s.get("daily_shuffle_enabled", True))
+            self.timezone.setText(loc.get("timezone", "America/Phoenix"))
+            self.lat.setValue(loc.get("latitude",  33.4484))
+            self.lon.setValue(loc.get("longitude", -112.074))
+            mode = c.get("application", {}).get("theme_mode", "system")
+            idx  = {"system": 0, "light": 1, "dark": 2}.get(mode, 0)
+            self.scheme.blockSignals(True)
+            self.scheme.setCurrentIndex(idx)
+            self.scheme.blockSignals(False)
         except Exception as e:
-            logger.error(f"Failed to initialize scheduler: {e}")
-            self.status_label.setText(f"Error: {e}")
-            
-    def _start_scheduler(self):
+            logger.warning(f"Config load: {e}")
+
+    def _save(self):
+        try:
+            c = load_config(self._cfg)
+            c["scheduling"] = {
+                "interval":              self.interval.value(),
+                "run_cycle":             self.run_cycle.isChecked(),
+                "daily_shuffle_enabled": self.daily_shuffle.isChecked(),
+            }
+            c["location"] = {
+                "timezone":  self.timezone.text(),
+                "latitude":  self.lat.value(),
+                "longitude": self.lon.value(),
+            }
+            scheme_map = {0: "system", 1: "light", 2: "dark"}
+            c.setdefault("application", {})["theme_mode"] = \
+                scheme_map.get(self.scheme.currentIndex(), "system")
+            save_config(self._cfg, c)
+            w = self.window()
+            if isinstance(w, QMainWindow):
+                w.statusBar().showMessage("Settings saved", 4000)
+        except Exception as e:
+            logger.error(f"Save failed: {e}")
+            QMessageBox.warning(
+                self, "Error", f"Could not save settings:\n{e}")
+
+    def _on_scheme(self, idx: int):
+        name = {0: "system", 1: "light", 2: "dark"}.get(idx, "system")
+        apply_color_scheme(name)
+        # Persist the preference immediately
+        try:
+            c = load_config(self._cfg)
+            c.setdefault("application", {})["theme_mode"] = name
+            save_config(self._cfg, c)
+        except Exception:
+            pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
+class SchedulerPage(QWidget):
+    """Start / stop the background scheduler and view its event log."""
+
+    state_changed = pyqtSignal(bool)        # True = running
+
+    def __init__(self, config_path: str, parent=None):
+        super().__init__(parent)
+        self._cfg = config_path
+        self.scheduler: Optional[SchedulerManager] = None
+        self._build()
+        self._init_scheduler()
+
+    def _build(self):
+        col = QVBoxLayout(self)
+        col.setSpacing(12)
+
+        # ── Status ──
+        sg = QGroupBox("Status")
+        sv = QVBoxLayout(sg)
+        self.status_lbl = QLabel("Stopped")
+        f = self.status_lbl.font()
+        f.setPointSize(f.pointSize() + 2)
+        f.setBold(True)
+        self.status_lbl.setFont(f)
+        self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        sv.addWidget(self.status_lbl)
+        col.addWidget(sg)
+
+        # ── Controls ──
+        row = QHBoxLayout()
+        self.start_btn = QPushButton(
+            QIcon.fromTheme("media-playback-start"), "Start")
+        self.start_btn.clicked.connect(self.start)
+        row.addWidget(self.start_btn)
+        self.stop_btn = QPushButton(
+            QIcon.fromTheme("media-playback-stop"), "Stop")
+        self.stop_btn.clicked.connect(self.stop)
+        self.stop_btn.setEnabled(False)
+        row.addWidget(self.stop_btn)
+        row.addStretch()
+        col.addLayout(row)
+
+        # ── Event Log ──
+        lg = QGroupBox("Event Log")
+        lv = QVBoxLayout(lg)
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        mono = QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont)
+        mono.setPointSize(max(mono.pointSize(), 9))
+        self.log.setFont(mono)
+        self.log.setMinimumHeight(180)
+        lv.addWidget(self.log)
+        col.addWidget(lg, 1)
+
+    def _init_scheduler(self):
+        try:
+            self.scheduler = create_scheduler(self._cfg)
+        except Exception as e:
+            logger.error(f"Scheduler init: {e}")
+            self._append(f"Init error: {e}")
+
+    # ── helpers ---------------------------------------------------------------
+    def _append(self, msg: str):
+        ts = datetime.now().strftime("%I:%M:%S %p")
+        self.log.append(f"[{ts}]  {msg}")
+
+    def is_running(self) -> bool:
+        return (self.scheduler is not None
+                and self.scheduler.is_running())
+
+    # ── public slots ----------------------------------------------------------
+    def start(self):
         if self.scheduler is None:
-            self.log_area.append("Error: Scheduler not initialized")
+            self._append("Scheduler not initialised")
             return
-            
-        if self.scheduler.is_running():
-            self.log_area.append("Scheduler is already running")
+        if self.is_running():
+            self._append("Already running")
             return
-            
         if self.scheduler.start():
-            self.status_label.setText("Scheduler: Running")
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    padding: 15px;
-                    background-color: #d4edda;
-                    border-radius: 6px;
-                    color: #155724;
-                }
-            """)
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
-            self.log_area.append("Scheduler started successfully")
-            interval = self.scheduler._tasks.get('cycle', {}).get('interval', 60)
-            self.log_area.append(f"Cycle interval: {interval} seconds")
-            daily_shuffle = self.scheduler._tasks.get('change', 'Not enabled') if 'change' in self.scheduler._tasks else 'Disabled'
-            self.log_area.append(f"Daily shuffle: {daily_shuffle}")
-            # Update tray menu by finding main window
-            parent = self.parentWidget()
-            while parent and not hasattr(parent, 'tray_icon'):
-                parent = parent.parentWidget()
-            if parent and hasattr(parent, 'tray_icon'):
-                parent.tray_icon.update_menu()
+            self.status_lbl.setText("Running")
+            p = self.status_lbl.palette()
+            p.setColor(
+                QPalette.ColorRole.WindowText,
+                self.palette().color(QPalette.ColorRole.Highlight))
+            self.status_lbl.setPalette(p)
+            self.start_btn.setEnabled(False)
+            self.stop_btn.setEnabled(True)
+            interval = self.scheduler._tasks.get(
+                "cycle", {}).get("interval", 60)
+            self._append(f"Started  (cycle every {interval}s)")
+            self.state_changed.emit(True)
         else:
-            self.log_area.append("Failed to start scheduler")
-            
-    def _stop_scheduler(self):
-        if self.scheduler is None:
+            self._append("Start failed")
+
+    def stop(self):
+        if not self.is_running():
+            self._append("Not running")
             return
-            
-        if not self.scheduler.is_running():
-            self.log_area.append("Scheduler is not running")
-            return
-            
         if self.scheduler.stop():
-            self.status_label.setText("Scheduler: Stopped")
-            self.status_label.setStyleSheet("""
-                QLabel {
-                    padding: 15px;
-                    background-color: #e8f4fc;
-                    border-radius: 6px;
-                    color: #0088cc;
-                }
-            """)
-            self.start_button.setEnabled(True)
-            self.stop_button.setEnabled(False)
-            self.log_area.append("Scheduler stopped successfully")
-            # Update tray menu by finding main window
-            parent = self.parentWidget()
-            while parent and not hasattr(parent, 'tray_icon'):
-                parent = parent.parentWidget()
-            if parent and hasattr(parent, 'tray_icon'):
-                parent.tray_icon.update_menu()
+            self.status_lbl.setText("Stopped")
+            # Reset label palette to default
+            self.status_lbl.setPalette(self.palette())
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            self._append("Stopped")
+            self.state_changed.emit(False)
         else:
-            self.log_area.append("Failed to stop scheduler")
+            self._append("Stop failed")
 
 
-class WallpaperGUI(QMainWindow):
-    """Main GUI window for KDE Wallpaper Changer - KDE 6 Plasma design."""
-    
+# ═════════════════════════════════════════════════════════════════════════════
+#  Main Window
+# ═════════════════════════════════════════════════════════════════════════════
+
+class WallpaperChangerWindow(QMainWindow):
+    """Top-level window with native KDE Plasma integration."""
+
     def __init__(self, config_path: Optional[str] = None):
         super().__init__()
-        self.config_path = config_path or str(DEFAULT_CONFIG_PATH)
-        # Set global reference for single instance
         global _main_window
         _main_window = self
-        self._init_ui()
-        
-    def _init_ui(self):
-        self.setWindowTitle("KDE Wallpaper Changer")
-        # Set initial size to 16:9 aspect ratio (matching wallpaper resolution 5120x2880)
-        self.setGeometry(100, 100, 1600, 900)
-        # Maintain 16:9 aspect ratio
-        self.setMinimumSize(800, 450)
-        
-        central = QWidget()
-        self.setCentralWidget(central)
-        
-        main_layout = QVBoxLayout()
-        main_layout.setSpacing(16)
-        main_layout.setContentsMargins(16, 16, 16, 16)
-        central.setLayout(main_layout)
-        
-        title = QLabel("KDE Wallpaper Changer")
-        title.setFont(QFont("Noto Sans", 18, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title.setStyleSheet(KDE_STYLES['label_title'])
-        main_layout.addWidget(title)
-        
+        self._cfg = config_path or str(DEFAULT_CONFIG_PATH)
+        self._qs  = QSettings(ORG_NAME, APP_NAME)
+
+        self._build_ui()
+        self._build_tray()
+        self._start_ipc()
+        self._restore_state()
+        self._apply_saved_scheme()
+
+    # ── UI construction -------------------------------------------------------
+
+    def _build_ui(self):
+        self.setWindowTitle(APP_NAME)
+        self.setWindowIcon(QIcon.fromTheme(
+            "preferences-desktop-wallpaper",
+            QIcon.fromTheme("image-x-generic")))
+        self.resize(1200, 700)
+        self.setMinimumSize(800, 500)
+
+        # Menu bar
+        mb = self.menuBar()
+
+        fm = mb.addMenu("&File")
+        act = fm.addAction(
+            QIcon.fromTheme("document-import"), "&Import Theme…")
+        act.setShortcut("Ctrl+I")
+        act.triggered.connect(lambda: self.themes._import())
+        fm.addSeparator()
+        act = fm.addAction(
+            QIcon.fromTheme("application-exit"), "&Quit")
+        act.setShortcut("Ctrl+Q")
+        act.triggered.connect(self._quit)
+
+        sm = mb.addMenu("&Scheduler")
+        self._act_start = sm.addAction(
+            QIcon.fromTheme("media-playback-start"), "&Start")
+        self._act_start.triggered.connect(
+            lambda: self.sched.start())
+        self._act_stop = sm.addAction(
+            QIcon.fromTheme("media-playback-stop"), "S&top")
+        self._act_stop.setEnabled(False)
+        self._act_stop.triggered.connect(
+            lambda: self.sched.stop())
+
+        hm = mb.addMenu("&Help")
+        hm.addAction(
+            QIcon.fromTheme("help-about"), "&About…"
+        ).triggered.connect(self._about)
+
+        # Status bar
+        self.statusBar().showMessage("Ready")
+
+        # Central tab widget
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet(KDE_STYLES['tab_widget'])
-        main_layout.addWidget(self.tabs)
-        
-        # Tab order: Themes, Settings, Scheduler
-        self.themes_tab = ThemesTab(self.config_path)
-        self.tabs.addTab(self.themes_tab, "🎨 Themes")
-        # Check initial tab visibility after adding to tab widget
-        self.themes_tab._check_initial_tab_visibility()
-        
-        self.settings_tab = SettingsTab(self.config_path)
-        self.tabs.addTab(self.settings_tab, "⚙️ Settings")
-        
-        self.scheduler_tab = SchedulerTab(self.config_path)
-        self.tabs.addTab(self.scheduler_tab, "⏱ Scheduler")
-        
-        # Initialize system tray icon
-        self.tray_icon = SystemTrayIcon(self.scheduler_tab, self)
-        self.tray_icon.update_menu()
-        
-        # Set up socket listener for single instance communication
-        self._socket_listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._socket_listener.setblocking(False)
-        self._socket_listener.listen(1)
-        self._socket_timer = QTimer(self)
-        self._socket_timer.timeout.connect(self._handle_socket_connection)
-        self._socket_timer.start(100)  # Check every 100ms
-        
-    def _handle_socket_connection(self):
-        """Handle incoming socket connections to show the window."""
+        self.setCentralWidget(self.tabs)
+
+        self.themes = ThemesPage(self._cfg)
+        self.tabs.addTab(
+            self.themes,
+            QIcon.fromTheme("preferences-desktop-wallpaper"),
+            "Themes")
+
+        self.settings = SettingsPage(self._cfg)
+        self.tabs.addTab(
+            self.settings,
+            QIcon.fromTheme("configure"),
+            "Settings")
+
+        self.sched = SchedulerPage(self._cfg)
+        self.tabs.addTab(
+            self.sched,
+            QIcon.fromTheme("chronometer"),
+            "Scheduler")
+
+        self.tabs.currentChanged.connect(self._on_tab)
+        self.sched.state_changed.connect(self._on_sched_state)
+
+        # Initial data load
+        self.themes.load_themes()
+        if self.tabs.currentWidget() is self.themes:
+            self.themes.set_tab_visible(True)
+
+    def _build_tray(self):
+        self.tray = QSystemTrayIcon(self.windowIcon(), self)
+        self.tray.setToolTip(APP_NAME)
+        self.tray.activated.connect(self._on_tray)
+        self._refresh_tray()
+        self.tray.setVisible(True)
+
+    def _refresh_tray(self):
+        m = QMenu()
+        running = self.sched.is_running()
+        st = m.addAction(
+            f"Scheduler: {'Running' if running else 'Stopped'}")
+        st.setEnabled(False)
+        m.addSeparator()
+        if running:
+            m.addAction(
+                QIcon.fromTheme("media-playback-stop"),
+                "Stop Scheduler"
+            ).triggered.connect(self.sched.stop)
+        else:
+            m.addAction(
+                QIcon.fromTheme("media-playback-start"),
+                "Start Scheduler"
+            ).triggered.connect(self.sched.start)
+        m.addSeparator()
+        m.addAction(
+            QIcon.fromTheme("window-new"), "Show"
+        ).triggered.connect(self._raise)
+        m.addAction(
+            QIcon.fromTheme("application-exit"), "Quit"
+        ).triggered.connect(self._quit)
+        self.tray.setContextMenu(m)
+
+    # ── slots -----------------------------------------------------------------
+
+    def _on_tab(self, idx):
+        self.themes.set_tab_visible(
+            self.tabs.widget(idx) is self.themes)
+
+    def _on_sched_state(self, running: bool):
+        self._act_start.setEnabled(not running)
+        self._act_stop.setEnabled(running)
+        self._refresh_tray()
+        self.tray.setToolTip(
+            f"{APP_NAME} — "
+            f"{'Running' if running else 'Stopped'}")
+
+    def _on_tray(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self.hide() if self.isVisible() else self._raise()
+
+    def _raise(self):
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
+    def _about(self):
+        QMessageBox.about(
+            self, f"About {APP_NAME}",
+            f"<h3>{APP_NAME}</h3>"
+            f"<p>Version {APP_VERSION}</p>"
+            f"<p>Dynamic wallpaper manager for KDE Plasma.<br>"
+            f"Changes wallpapers based on time of day using "
+            f"sunrise / sunset calculations.</p>")
+
+    # ── single-instance IPC ---------------------------------------------------
+
+    def _start_ipc(self):
+        self._ipc_timer = QTimer(self)
+        self._ipc_timer.timeout.connect(self._poll_ipc)
+        self._ipc_timer.start(250)
+
+    def _poll_ipc(self):
+        if _instance_lock is None:
+            return
         try:
-            self._socket_listener.setblocking(False)
-            conn, addr = self._socket_listener.accept()
-            data = conn.recv(1024)
-            if data == b'SHOW_WINDOW':
-                self.show()
-                self.raise_()
-                self.activateWindow()
+            conn, _ = _instance_lock.accept()
+            if conn.recv(64) == b"SHOW":
+                self._raise()
             conn.close()
         except BlockingIOError:
-            # No connection pending
             pass
         except Exception:
             pass
-        
+
+    # ── window state persistence ----------------------------------------------
+
+    def _restore_state(self):
+        g = self._qs.value("geometry")
+        if g:
+            self.restoreGeometry(g)
+        s = self._qs.value("windowState")
+        if s:
+            self.restoreState(s)
+
+    def _persist_state(self):
+        self._qs.setValue("geometry",    self.saveGeometry())
+        self._qs.setValue("windowState", self.saveState())
+
+    def _apply_saved_scheme(self):
+        """Read the saved colour scheme from config and apply it."""
+        try:
+            c    = load_config(self._cfg)
+            mode = c.get("application", {}).get(
+                "theme_mode", "system")
+            apply_color_scheme(mode)
+            idx = {"system": 0, "light": 1, "dark": 2}.get(mode, 0)
+            self.settings.scheme.blockSignals(True)
+            self.settings.scheme.setCurrentIndex(idx)
+            self.settings.scheme.blockSignals(False)
+        except Exception:
+            pass
+
+    # ── lifecycle -------------------------------------------------------------
+
     def closeEvent(self, event):
-        """Handle window close event - hide to tray instead of quitting."""
-        # Only hide if system tray is available
-        if self.tray_icon and self.tray_icon.isSystemTrayAvailable():
+        self._persist_state()
+        if self.tray.isSystemTrayAvailable():
             self.hide()
             event.ignore()
         else:
-            # No system tray - shutdown scheduler and quit
-            if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
-                if self.scheduler_tab.scheduler.is_running():
-                    self.scheduler_tab.log_area.append("Shutting down scheduler...")
-                    self.scheduler_tab.scheduler.stop(wait=True)
-                    self.scheduler_tab.log_area.append("Scheduler shutdown complete")
+            self._cleanup()
             event.accept()
 
+    def _quit(self):
+        self._persist_state()
+        self._cleanup()
+        QApplication.quit()
+
+    def _cleanup(self):
+        if self.sched.is_running():
+            self.sched.scheduler.stop(wait=True)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  Entry Point
+# ═════════════════════════════════════════════════════════════════════════════
 
 def main():
-    """Main entry point for the GUI application."""
     if not PYQT6_AVAILABLE:
-        print("Error: PyQt6 is not installed.")
-        print("Please install it with: pip install PyQt6")
+        print("Error: PyQt6 is required.  pip install PyQt6")
         sys.exit(1)
-        
+
     import argparse
-    parser = argparse.ArgumentParser(description="KDE Wallpaper Changer GUI")
-    parser.add_argument(
-        "--config",
-        type=str,
-        default=None,
-        help="Path to config file (default: ~/.config/wallpaper-changer/config.json)"
-    )
-    args = parser.parse_args()
-    
+    ap = argparse.ArgumentParser(description=APP_NAME)
+    ap.add_argument("--config", default=None,
+                    help="Path to config file")
+    args = ap.parse_args()
+
+    global _system_palette
+
     app = QApplication(sys.argv)
-    # Prevent app from quitting when window is closed (tray icon should keep it running)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationVersion(APP_VERSION)
+    app.setOrganizationName(ORG_NAME)
+    app.setDesktopFileName("org.kde.kwallpaper")
+    app.setWindowIcon(
+        QIcon.fromTheme("preferences-desktop-wallpaper"))
     app.setQuitOnLastWindowClosed(False)
-    
-    # Try to acquire single instance lock
-    if not _acquire_single_instance_lock():
-        # Another instance is running - show it and exit
-        _show_existing_instance()
-        # Give time for the signal to be processed
-        import time
-        time.sleep(0.1)
+
+    # Snapshot the system palette before any overrides
+    _system_palette = QPalette(app.palette())
+
+    if not _acquire_lock():
+        _signal_running_instance()
         sys.exit(0)
-    
-    palette = app.palette()
-    palette.setColor(palette.ColorRole.Window, QColor("#f0f0f0"))
-    palette.setColor(palette.ColorRole.WindowText, QColor("#333333"))
-    palette.setColor(palette.ColorRole.Base, QColor("#ffffff"))
-    palette.setColor(palette.ColorRole.AlternateBase, QColor("#f5f5f5"))
-    palette.setColor(palette.ColorRole.ToolTipBase, QColor("#0088cc"))
-    palette.setColor(palette.ColorRole.ToolTipText, QColor("#ffffff"))
-    palette.setColor(palette.ColorRole.Text, QColor("#333333"))
-    palette.setColor(palette.ColorRole.Button, QColor("#0088cc"))
-    palette.setColor(palette.ColorRole.ButtonText, QColor("#ffffff"))
-    palette.setColor(palette.ColorRole.BrightText, QColor("#ffffff"))
-    palette.setColor(palette.ColorRole.Link, QColor("#0088cc"))
-    palette.setColor(palette.ColorRole.Highlight, QColor("#0088cc"))
-    palette.setColor(palette.ColorRole.HighlightedText, QColor("#ffffff"))
-    app.setPalette(palette)
-    
-    # Check if a window already exists (single instance)
-    global _main_window
-    if _main_window is not None:
-        # Window exists - show it instead of creating a new one
-        _main_window.show()
-        _main_window.raise_()
-        _main_window.activateWindow()
-    else:
-        # Create new window
-        window = WallpaperGUI(config_path=args.config)
-        window.show()
-    
+
+    win = WallpaperChangerWindow(config_path=args.config)
+    win.show()
     sys.exit(app.exec())
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
