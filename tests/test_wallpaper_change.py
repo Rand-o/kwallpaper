@@ -6,20 +6,21 @@ change_wallpaper = wallpaper_changer.change_wallpaper
 
 
 def test_change_wallpaper_success(monkeypatch):
-     """Test successful wallpaper change."""
-     mock_run = MagicMock()
-     monkeypatch.setattr('subprocess.run', mock_run)
+      """Test successful wallpaper change."""
+      mock_run = MagicMock()
+      monkeypatch.setattr('subprocess.run', mock_run)
 
-     # Mock successful plasma-apply-wallpaperimage
-     # First call (pgrep), second call (plasma-apply-wallpaperimage) return 0
-     mock_run.side_effect = [
-         MagicMock(returncode=0),  # pgrep succeeds
-         MagicMock(returncode=0),  # plasma-apply-wallpaperimage succeeds
-     ]
+      # Mock successful plasma-apply-wallpaperimage
+      # Calls: pgrep, plasma-apply-wallpaperimage, kreadconfig5 (verification)
+      mock_run.side_effect = [
+          MagicMock(returncode=0),  # pgrep succeeds (plasma is running)
+          MagicMock(returncode=0),  # plasma-apply-wallpaperimage succeeds
+          MagicMock(returncode=0, stdout='/path/to/image.jpg\n'),  # kreadconfig5 returns correct path
+      ]
 
-     result = change_wallpaper('/path/to/image.jpg')
-     assert result is True
-     assert mock_run.call_count == 2  # pgrep + plasma-apply-wallpaperimage
+      result = change_wallpaper('/path/to/image.jpg')
+      assert result is True
+      assert mock_run.call_count == 3  # pgrep + plasma-apply-wallpaperimage + kreadconfig5 verification
 
 
 def test_change_wallpaper_plasma_apply_fails(monkeypatch):

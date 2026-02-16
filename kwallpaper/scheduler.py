@@ -64,32 +64,26 @@ class SchedulerManager:
     
     def _run_cycle_task(self) -> None:
         try:
-            logger.info("Executing cycle task")
             class MockArgs:
                 theme_path = None
                 config = self.config_path
                 time = None
                 monitor = False
             result = run_cycle_command(MockArgs())
-            if result == 0:
-                logger.info("Cycle task completed successfully")
-            else:
+            if result != 0:
                 logger.error(f"Cycle task failed with exit code {result}")
         except Exception as e:
             logger.error(f"Cycle task error: {e}", exc_info=True)
     
     def _run_change_task(self) -> None:
         try:
-            logger.info("Executing change task")
             class MockArgs:
                 theme_path = None
                 config = self.config_path
                 time = None
                 monitor = False
             result = run_change_command(MockArgs())
-            if result == 0:
-                logger.info("Change task completed successfully")
-            else:
+            if result != 0:
                 logger.error(f"Change task failed with exit code {result}")
         except Exception as e:
             logger.error(f"Change task error: {e}", exc_info=True)
@@ -107,8 +101,9 @@ class SchedulerManager:
             config = self._get_config()
             self.scheduler = BackgroundScheduler(daemon=True)
             
+            interval = config.get('interval', 60)
             if config.get('run_cycle', True):
-                interval = config.get('interval', 60)
+                
                 self.scheduler.add_job(
                     self._run_cycle_task,
                     trigger=IntervalTrigger(seconds=interval),
@@ -132,6 +127,11 @@ class SchedulerManager:
                 logger.info(f"Added change task: runs every {interval} seconds")
             
             self.scheduler.start()
+            # Check if at least one task was added
+            if not self._tasks:
+                logger.error("Failed to start scheduler - cycle task is not enabled")
+                self._is_running = False
+                return False
             self._is_running = True
             logger.info("Scheduler started successfully")
             return True
@@ -141,17 +141,20 @@ class SchedulerManager:
             return False
     
     def stop(self, wait: bool = True) -> bool:
-        if not self._is_running or self.scheduler is None:
+        if not self._is_running:
             logger.warning("Scheduler is not running")
             return True
         
         try:
-            self.scheduler.shutdown(wait=wait)
+            if self.scheduler is not None:
+                self.scheduler.shutdown(wait=wait)
+                self.scheduler = None
             self._is_running = False
             logger.info("Scheduler stopped successfully")
             return True
         except Exception as e:
             logger.error(f"Failed to stop scheduler: {e}", exc_info=True)
+            self._is_running = False
             return False
     
     def add_job(self, name: str, func: Callable, trigger: Any) -> bool:
@@ -182,6 +185,17 @@ class SchedulerManager:
         except Exception as e:
             logger.error(f"Failed to remove job {name}: {e}", exc_info=True)
             return False
+    
+        if self._log_callback:
+            self._log_callback("[INFO] Log cleanup completed - old entries cleared")
+    
+        if self._log_callback:
+            self._log_callback("[INFO] Log cleared")
+
+        """Clear all logged messages."""
+        self._log_start_time = datetime.now()
+        if self._log_callback:
+            self._log_callback("[INFO] Log cleared")
     
     def get_status(self) -> dict:
         status = {'running': self._is_running, 'tasks': self._tasks.copy()}

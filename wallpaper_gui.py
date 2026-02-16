@@ -265,6 +265,9 @@ class SystemTrayIcon(QSystemTrayIcon):
         status_action = menu.addAction(f"Status: {status}")
         status_action.setEnabled(False)
         
+        # Set tooltip with status
+        self.setToolTip(f"Scheduler Status - {status}")
+        
         menu.addSeparator()
         
         # Start scheduler
@@ -344,15 +347,16 @@ class SettingsTab(QWidget):
         self.cycle_interval.setStyleSheet(KDE_STYLES['input'])
         scheduler_form.addRow("Cycle Interval:", self.cycle_interval)
         
-        self.daily_shuffle_enabled = QCheckBox("Enable daily theme shuffle")
-        self.daily_shuffle_enabled.setChecked(True)
-        self.daily_shuffle_enabled.setStyleSheet(KDE_STYLES['checkbox'])
-        scheduler_inner_layout.addWidget(self.daily_shuffle_enabled)
-        
+
         self.run_cycle = QCheckBox("Enable cycle task (runs every interval)")
         self.run_cycle.setChecked(True)
         self.run_cycle.setStyleSheet(KDE_STYLES['checkbox'])
         scheduler_inner_layout.addWidget(self.run_cycle)
+
+        self.daily_shuffle_enabled = QCheckBox("Enable daily theme shuffle")
+        self.daily_shuffle_enabled.setChecked(True)
+        self.daily_shuffle_enabled.setStyleSheet(KDE_STYLES['checkbox'])
+        scheduler_inner_layout.addWidget(self.daily_shuffle_enabled)
         
         left_layout.addWidget(scheduler_card)
         
@@ -1143,8 +1147,10 @@ class SchedulerTab(QWidget):
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
             self.log_area.append("Scheduler started successfully")
-            self.log_area.append("Cycle task: Every 60 seconds")
-            self.log_area.append("Daily shuffle: Enabled")
+            interval = self.scheduler._tasks.get('cycle', {}).get('interval', 60)
+            self.log_area.append(f"Cycle interval: {interval} seconds")
+            daily_shuffle = self.scheduler._tasks.get('change', 'Not enabled') if 'change' in self.scheduler._tasks else 'Disabled'
+            self.log_area.append(f"Daily shuffle: {daily_shuffle}")
             # Update tray menu by finding main window
             parent = self.parentWidget()
             while parent and not hasattr(parent, 'tray_icon'):
@@ -1233,10 +1239,6 @@ class WallpaperGUI(QMainWindow):
         self.scheduler_tab = SchedulerTab(self.config_path)
         self.tabs.addTab(self.scheduler_tab, "⏱ Scheduler")
         
-        # Auto-start scheduler when application opens
-        if self.scheduler_tab.scheduler is not None and not self.scheduler_tab.scheduler.is_running():
-            self.scheduler_tab._start_scheduler()
-        
         # Initialize system tray icon
         self.tray_icon = SystemTrayIcon(self.scheduler_tab, self)
         self.tray_icon.update_menu()
@@ -1280,12 +1282,6 @@ class WallpaperGUI(QMainWindow):
                     self.scheduler_tab.scheduler.stop(wait=True)
                     self.scheduler_tab.log_area.append("Scheduler shutdown complete")
             event.accept()
-        if hasattr(self.scheduler_tab, 'scheduler') and self.scheduler_tab.scheduler is not None:
-            if self.scheduler_tab.scheduler.is_running():
-                self.scheduler_tab.log_area.append("Shutting down scheduler...")
-                self.scheduler_tab.scheduler.stop(wait=True)
-                self.scheduler_tab.log_area.append("Scheduler shutdown complete")
-        event.accept()
 
 
 def main():
