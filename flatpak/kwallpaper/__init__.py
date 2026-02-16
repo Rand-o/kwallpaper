@@ -1,0 +1,1 @@
+# KDE Wallpaper Changer package

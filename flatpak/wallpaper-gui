@@ -1,3 +1,4 @@
 #!/bin/bash
 cd /app/share/kwallpaper || exit 1
+export PYTHONPATH="/app/share/kwallpaper:$PYTHONPATH"
 exec python3 wallpaper_gui.py "$@"

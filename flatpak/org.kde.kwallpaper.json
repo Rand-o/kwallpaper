@@ -6,35 +6,57 @@
   "command": "wallpaper-gui",
   "finish-args": [
     "--share=ipc",
-    "--share=network",
     "--socket=fallback-x11",
     "--socket=wayland",
-    "--socket=session_bus",
+    "--socket=session-bus",
     "--filesystem=xdg-config/kdeglobals:ro",
     "--filesystem=xdg-cache/wallpaper-changer:rw",
     "--filesystem=xdg-config/wallpaper-changer:rw"
   ],
   "modules": [
     {
-      "name": "python-dependencies",
+      "name": "python-deps",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install /app/deps/astral-3.2-py3-none-any.whl",
-        "pip3 install /app/deps/apscheduler-3.11.2-py3-none-any.whl",
-        "pip3 install /app/deps/pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl"
+        "mkdir -p /app/lib/python3.12/site-packages",
+        "pip3 install --no-index --find-links=. --target=/app/lib/python3.12/site-packages --upgrade tzlocal-5.3.1-py3-none-any.whl apscheduler-3.11.2-py3-none-any.whl astral-3.2-py3-none-any.whl pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl pyqt6_qt6-6.9.2-py3-none-manylinux_2_28_x86_64.whl pyqt6-6.9.1-cp39-abi3-manylinux_2_28_x86_64.whl python_dateutil-2.9.0.post0-py2.py3-none-any.whl pytz-2025.2-py2.py3-none-any.whl six-1.17.0-py2.py3-none-any.whl"
       ],
       "sources": [
         {
           "type": "file",
-          "path": "deps/astral-3.2-py3-none-any.whl"
+          "path": "flatpak-deps/tzlocal-5.3.1-py3-none-any.whl"
         },
         {
           "type": "file",
-          "path": "deps/apscheduler-3.11.2-py3-none-any.whl"
+          "path": "flatpak-deps/apscheduler-3.11.2-py3-none-any.whl"
         },
         {
           "type": "file",
-          "path": "deps/pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl"
+          "path": "flatpak-deps/astral-3.2-py3-none-any.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/pyqt6_qt6-6.9.2-py3-none-manylinux_2_28_x86_64.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/pyqt6-6.9.1-cp39-abi3-manylinux_2_28_x86_64.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/python_dateutil-2.9.0.post0-py2.py3-none-any.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/pytz-2025.2-py2.py3-none-any.whl"
+        },
+        {
+          "type": "file",
+          "path": "flatpak-deps/six-1.17.0-py2.py3-none-any.whl"
         }
       ]
     },
@@ -42,15 +64,23 @@
       "name": "kwallpaper",
       "buildsystem": "simple",
       "build-commands": [
-        "pip3 install --prefix=/app .",
-        "install -Dm644 flatpak/org.kde.kwallpaper.desktop /app/share/applications/org.kde.kwallpaper.desktop",
-        "install -Dm644 flatpak/org.kde.kwallpaper.metainfo.xml /app/share/metainfo/org.kde.kwallpaper.metainfo.xml"
+        "mkdir -p /app/bin",
+        "cp wallpaper-gui /app/bin/",
+        "chmod +x /app/bin/wallpaper-gui",
+        "mkdir -p /app/share/applications",
+        "cp org.kde.kwallpaper.desktop /app/share/applications/",
+        "mkdir -p /app/share/metainfo",
+        "# Skip metainfo for now - icon issue needs fixing",
+        "# cp org.kde.kwallpaper.metainfo.xml /app/share/metainfo/",
+        "mkdir -p /app/share/kwallpaper/kwallpaper",
+        "cp -r kwallpaper/* /app/share/kwallpaper/kwallpaper/",
+        "cp wallpaper_gui.py /app/share/kwallpaper/",
+        "cp wallpaper_cli.py /app/share/kwallpaper/"
       ],
       "sources": [
         {
           "type": "dir",
-          "path": ".",
-          "dest": "/app/share/kwallpaper"
+          "path": "."
         }
       ]
     }

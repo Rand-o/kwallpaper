@@ -19,11 +19,6 @@
   <provides>
     <id>org.kde.wallpaper-changer.desktop</id>
   </provides>
-  <screenshots>
-    <screenshot type="default">
-      <image>https://raw.githubusercontent.com/Rand-o/kwallpaper/main/screenshot.png</image>
-    </screenshot>
-  </screenshots>
   <content_rating type="oars-1.1" />
   <releases>
     <release version="1.0.0" date="2026-02-16">
@@ -32,7 +27,7 @@
       </description>
     </release>
   </releases>
-  <developer id="com.github.rando">
-    <name>Rand-o</name>
-  </developer>
+  <developer id="com.github.rando" name="Rand-o" />
+  <launchable type="desktop-id">org.kde.kwallpaper.desktop</launchable>
+  <metadata_license>MIT</metadata_license>
 </component>

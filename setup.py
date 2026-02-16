@@ -6,7 +6,7 @@ A Python CLI tool for Fedora 43 KDE that automatically changes wallpapers
 based on time-of-day categories using .ddw (KDE wallpaper theme) zip files.
 """
 
-from setuptools import setup, find_packages
+from setuptools import setup
 from pathlib import Path
 
 # Read the README
@@ -22,7 +22,7 @@ setup(
     author="Rand-o",
     author_email="github@rand-o.com",
     url="https://github.com/Rand-o/kwallpaper",
-    packages=find_packages(),
+    packages=["kwallpaper"],
     classifiers=[
         "Development Status :: 4 - Beta",
         "Environment :: Console",
