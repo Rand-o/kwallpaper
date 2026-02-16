@@ -870,6 +870,14 @@ class ThemesTab(QWidget):
         self.preview_widget.setStyleSheet("background-color: #eff0f1;")
         layout.addWidget(self.preview_widget)
         
+        # Apply button (bottom right)
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self._apply_theme)
+        apply_button.setFont(QFont("Noto Sans", 12, QFont.Weight.Bold))
+        apply_button.setStyleSheet(KDE_STYLES['button_primary'])
+        apply_button.setFixedHeight(40)
+        left_layout.addWidget(apply_button)
+        
         # Track tab visibility to control preview timer
         # Store reference to check later when tab widget is fully set up
         self._pending_tab_check = True
@@ -955,6 +963,39 @@ class ThemesTab(QWidget):
                 self.theme_list.load_themes()
             except Exception as e:
                 logger.error(f"Failed to import theme: {e}")
+    
+    def _apply_theme(self):
+        """Apply the currently selected theme."""
+        current_item = self.theme_list.currentItem()
+        if current_item:
+            theme_name = current_item.text()
+            theme_path = current_item.data(Qt.ItemDataRole.UserRole)
+            
+            # Extract the folder name from the theme path
+            from pathlib import Path
+            folder_name = Path(theme_path).name
+            
+            # Import and run change command
+            try:
+                from kwallpaper.wallpaper_changer import run_change_command
+                from types import SimpleNamespace
+                
+                args = SimpleNamespace(
+                    theme_path=folder_name,
+                    config=self.config_path,
+                    monitor=False,
+                    time=None
+                )
+                result = run_change_command(args)
+                
+                if result == 0:
+                    logger.info(f"Theme '{theme_name}' applied successfully")
+                else:
+                    logger.error(f"Failed to apply theme '{theme_name}'")
+            except Exception as e:
+                logger.error(f"Failed to apply theme: {e}")
+        else:
+            logger.warning("No theme selected to apply")
 
 
 

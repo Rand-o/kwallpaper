@@ -1793,7 +1793,25 @@ def run_change_command(args) -> int:
         if args.theme_path:
             # Manual theme selection mode
             theme_path = args.theme_path
-            print(f"Using manual theme selection: {theme_path}")
+            
+            # Check if theme_path is a folder name (not a path with slashes)
+            # If so, look it up in the themes directory
+            if '/' not in theme_path and '\\' not in theme_path:
+                # This is a theme folder name, look it up
+                try:
+                    themes = discover_themes()
+                    theme_dict = {Path(path).name: path for _, path in themes}
+                    if theme_path in theme_dict:
+                        theme_path = theme_dict[theme_path]
+                        print(f"Using theme folder: {theme_path}")
+                    else:
+                        print(f"Error: Theme '{theme_path}' not found in themes directory", file=sys.stderr)
+                        return 1
+                except FileNotFoundError as e:
+                    print(f"Error: {e}", file=sys.stderr)
+                    return 1
+            else:
+                print(f"Using manual theme selection: {theme_path}")
         else:
             # Daily shuffler mode
             print("Using daily shuffler")
@@ -2105,7 +2123,10 @@ Examples:
   Change wallpaper using daily shuffler (cycles through all themes)
     wallpaper_cli.py change
 
-  Change wallpaper to specific theme
+  Change wallpaper to specific theme (by folder name)
+    wallpaper_cli.py change 24hr-Miami-1
+
+  Change wallpaper to specific theme (by path)
     wallpaper_cli.py change --theme-path theme.ddw
 
   Change wallpaper to specific image based on current time (same theme)
@@ -2136,7 +2157,7 @@ Examples:
 
     # Change wallpaper command
     change_parser = subparsers.add_parser('change', help='Change wallpaper to next image')
-    change_parser.add_argument('--theme-path', required=False, help='Path to .ddw zip file or extracted theme directory (optional, uses daily shuffler if not provided)')
+    change_parser.add_argument('--theme-path', required=False, help='Theme folder name (e.g., "24hr-Miami-1") or path to .ddw/extracted theme (optional, uses daily shuffler if not provided)')
     change_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
     change_parser.add_argument('--monitor', action='store_true', help='Run continuously, cycling wallpapers based on time-of-day')
     change_parser.add_argument('--time', help='Specific time to use for wallpaper selection (HH:MM format)')
