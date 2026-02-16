@@ -15,7 +15,7 @@ try:
     from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
         QPushButton, QLabel, QTextEdit, QFormLayout, QTabWidget,
-        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QFrame,
+        QLineEdit, QDoubleSpinBox, QSpinBox, QCheckBox, QComboBox, QFrame,
         QScrollArea, QFileDialog, QListWidget, QListWidgetItem,
         QSystemTrayIcon, QMenu
     )
@@ -332,9 +332,6 @@ class SettingsTab(QWidget):
         main_layout.setContentsMargins(20, 20, 20, 20)
         self.setLayout(main_layout)
         
-        # Load saved theme mode
-        self._load_theme_mode()
-        
         # Left column - all settings (350px fixed width)
         left_column = QWidget()
         left_layout = QVBoxLayout()
@@ -415,8 +412,9 @@ class SettingsTab(QWidget):
         
         # Application Settings Section
         app_settings_card = ModernCard()
-        app_settings_inner_layout = QVBoxLayout()
-        app_settings_inner_layout.setSpacing(12)
+        app_settings_inner_layout = QFormLayout()
+        app_settings_inner_layout.setSpacing(8)
+        app_settings_inner_layout.setFormAlignment(Qt.AlignmentFlag.AlignLeft)
         app_settings_card.setLayout(app_settings_inner_layout)
         
         app_title = QLabel("Application Settings")
@@ -449,6 +447,173 @@ class SettingsTab(QWidget):
         main_layout.addStretch()
         self._load_config()
         
+        # Load and apply theme mode after UI is fully initialized
+        self._load_theme_mode()
+        
+    def _load_theme_mode(self):
+        """Load the saved theme mode from config."""
+        try:
+            from kwallpaper.wallpaper_changer import load_config
+            config = load_config(self.config_path)
+            app_config = config.get('application', {})
+            theme_mode = app_config.get('theme_mode', 'light')
+            
+            # Set combo box to correct index
+            if theme_mode == 'dark':
+                self.theme_mode.setCurrentIndex(1)
+            else:
+                self.theme_mode.setCurrentIndex(0)
+                
+            # Apply the theme
+            self._apply_theme_mode(theme_mode)
+        except Exception as e:
+            logger.warning(f"Failed to load theme mode: {e}")
+    
+    def _on_theme_changed(self, index: int):
+        """Handle theme mode change."""
+        from kwallpaper.wallpaper_changer import load_config, save_config
+        
+        theme_mode = "dark" if index == 1 else 'light'
+        
+        # Load current config
+        config = load_config(self.config_path)
+        
+        # Update theme mode in config
+        if 'application' not in config:
+            config['application'] = {}
+        config['application']['theme_mode'] = theme_mode
+        
+        # Save config
+        save_config(self.config_path, config)
+        
+        # Apply the theme
+        self._apply_theme_mode(theme_mode)
+    
+    def _apply_theme_mode(self, theme_mode: str):
+        """Apply the selected theme mode to all widgets."""
+        colors = KDE_COLORS[theme_mode]
+        
+        # Update all styles with current colors
+        self._update_all_styles(colors)
+        
+        # Update the window background
+        self.setStyleSheet(f"background-color: {colors['background']}")
+        
+        # Re-apply styles to all widgets
+        self._reapply_styles_to_widgets(colors)
+    
+    def _reapply_styles_to_widgets(self, colors: dict):
+        """Reapply styles to all child widgets."""
+        for card in self.findChildren(QFrame):
+            card.setStyleSheet(KDE_STYLES['card'])
+        
+        for widget in self.findChildren((QLineEdit, QSpinBox, QDoubleSpinBox)):
+            widget.setStyleSheet(KDE_STYLES['input'])
+        
+        for widget in self.findChildren(QCheckBox):
+            widget.setStyleSheet(KDE_STYLES['checkbox'])
+        
+        for widget in self.findChildren(QLabel):
+            widget.setStyleSheet(f"color: {colors['text_primary']}")
+        
+        for widget in self.findChildren(QPushButton):
+            if widget.text() == "Save Settings":
+                widget.setStyleSheet(KDE_STYLES['button_primary'])
+            else:
+                widget.setStyleSheet(KDE_STYLES['button_secondary'])
+
+    def _get_card_style(self, colors: dict) -> str:
+        return f"""
+            QFrame {{
+                background-color: {colors['panel']};
+                border: 1px solid {colors['border']};
+                border-radius: 8px;
+                padding: 16px;
+            }}
+            QFrame:hover {{
+                border: 1px solid {colors['accent']};
+            }}
+        """
+    
+    def _get_button_primary_style(self, colors: dict) -> str:
+        return f"""
+            QPushButton {{
+                background-color: {colors['accent']};
+                color: white;
+                border: none;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['accent_hover']};
+            }}
+            QPushButton:pressed {{
+                background-color: {colors['accent_active']};
+            }}
+        """
+    
+    def _get_button_secondary_style(self, colors: dict) -> str:
+        return f"""
+            QPushButton {{
+                background-color: {colors['panel']};
+                color: {colors['text_primary']};
+                border: 1px solid {colors['border']};
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {colors['background']};
+                border: 1px solid {colors['accent']};
+            }}
+        """
+    
+    def _get_input_style(self, colors: dict) -> str:
+        return f"""
+            QLineEdit, QSpinBox, QDoubleSpinBox {{
+                background-color: {colors['panel']};
+                border: 1px solid {colors['border']};
+                border-radius: 4px;
+                padding: 6px 10px;
+                color: {colors['text_primary']};
+                min-height: 28px;
+            }}
+            QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus {{
+                border: 2px solid {colors['accent']};
+                padding: 5px 9px;
+            }}
+        """
+    
+    def _get_checkbox_style(self, colors: dict) -> str:
+        return f"""
+            QCheckBox {{
+                spacing: 8px;
+                color: {colors['text_primary']};
+            }}
+            QCheckBox::indicator {{
+                width: 18px;
+                height: 18px;
+                border-radius: 3px;
+                border: 1px solid {colors['border']};
+                background-color: {colors['panel']};
+            }}
+            QCheckBox::indicator:hover {{
+                border: 1px solid {colors['accent']};
+            }}
+            QCheckBox::indicator:checked {{
+                background-color: {colors['accent']};
+                border: 1px solid {colors['accent']};
+            }}
+        """
+    
+    def _update_all_styles(self, colors: dict):
+        KDE_STYLES['card'] = self._get_card_style(colors)
+        KDE_STYLES['button_primary'] = self._get_button_primary_style(colors)
+        KDE_STYLES['button_secondary'] = self._get_button_secondary_style(colors)
+        KDE_STYLES['input'] = self._get_input_style(colors)
+        KDE_STYLES['checkbox'] = self._get_checkbox_style(colors)
+
     def _load_config(self):
         try:
             config = load_config(self.config_path)
@@ -917,81 +1082,6 @@ class ThemesTab(QWidget):
         # Store reference to check later when tab widget is fully set up
         self._pending_tab_check = True
         
-    def _load_theme_mode(self):
-        """Load the saved theme mode from config."""
-        try:
-            from kwallpaper.wallpaper_changer import load_config
-            config = load_config(self.config_path)
-            app_config = config.get('application', {})
-            theme_mode = app_config.get('theme_mode', 'light')
-            
-            # Set combo box to correct index
-            if theme_mode == 'dark':
-                self.theme_mode.setCurrentIndex(1)
-            else:
-                self.theme_mode.setCurrentIndex(0)
-                
-            # Apply the theme
-            self._apply_theme_mode(theme_mode)
-        except Exception as e:
-            logger.warning(f"Failed to load theme mode: {e}")
-    
-    def _on_theme_changed(self, index: int):
-        """Handle theme mode change."""
-        from kwallpaper.wallpaper_changer import load_config, save_config
-        
-        theme_mode = "dark" if index == 1 else "light"
-        
-        # Load current config
-        config = load_config(self.config_path)
-        
-        # Update theme mode in config
-        if 'application' not in config:
-            config['application'] = {}
-        config['application']['theme_mode'] = theme_mode
-        
-        # Save config
-        save_config(self.config_path, config)
-        
-        # Reload styles
-        self._apply_theme_mode(theme_mode)
-    
-    def _apply_theme_mode(self, theme_mode: str):
-        """Apply the selected theme mode to all widgets."""
-        colors = KDE_COLORS[theme_mode]
-        
-        # Update all styles with current colors
-        self._update_styles(colors)
-        
-        # Update the window background
-        self.setStyleSheet(f"background-color: {colors['background']}")
-        
-        # Update all child widgets
-        for child in self.findChildren(QWidget):
-            if not isinstance(child, (QLabel, QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, QCheckBox, QComboBox, QTextEdit)):
-                child.setStyleSheet("")
-        
-        # Re-apply card styles
-        for card in self.findChildren(QFrame):
-            if card.property('is_card'):
-                card.setStyleSheet(self._get_card_style(colors))
-        
-        # Re-apply input styles
-        for widget in self.findChildren((QLineEdit, QSpinBox, QDoubleSpinBox)):
-            widget.setStyleSheet(self._get_input_style(colors))
-        
-        # Re-apply button styles
-        for widget in self.findChildren(QPushButton):
-            if widget.text() in ["Start Scheduler", "Stop Scheduler", "Apply", "Import Theme File"]:
-                if widget.text() == "Import Theme File":
-                    widget.setStyleSheet(self._get_button_secondary_style(colors))
-                else:
-                    widget.setStyleSheet(self._get_button_primary_style(colors))
-        
-        # Re-apply label styles
-        for widget in self.findChildren(QLabel):
-            widget.setStyleSheet(f"color: {colors['text_primary']}")
-    
     def _check_initial_tab_visibility(self):
         """Check if this tab is visible and start timer if so."""
         if not self._pending_tab_check:
