@@ -71,7 +71,7 @@ python wallpaper_gui.py
 ## Configuration
 
 ### Config File Location
-Default: `~/.config/wallpaper-changer/config.json`
+Default: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
 
 ```json
 {

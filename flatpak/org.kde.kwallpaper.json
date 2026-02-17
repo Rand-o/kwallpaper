@@ -9,9 +9,10 @@
     "--socket=fallback-x11",
     "--socket=wayland",
     "--socket=session-bus",
-    "--filesystem=xdg-config/kdeglobals:ro",
-    "--filesystem=xdg-cache/wallpaper-changer:rw",
-    "--filesystem=xdg-config/wallpaper-changer:rw"
+    "--filesystem=~/.config/wallpaper-changer:rw",
+    "--filesystem=~/.cache/wallpaper-changer:rw",
+    "--filesystem=~/.var/app/org.kde.kwallpaper/config/wallpaper-changer:rw",
+    "--filesystem=~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer:rw"
   ],
   "modules": [
     {

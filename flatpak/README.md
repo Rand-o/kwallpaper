@@ -51,7 +51,14 @@ To install the created bundle on any machine with Flatpak:
 flatpak install --user bundle/org.kde.kwallpaper.flatpak
 ```
 
-After installation, the app can be launched from the application menu as "KDE Wallpaper Changer".
+### Configuration Storage
+
+The app stores configuration, themes, and cache in Flatpak-specific paths:
+- **Config**: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/`
+- **Cache**: `~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer/`
+- **Themes**: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/themes/`
+
+These paths are self-contained and don't require access to the host's `~/.config` or `~/.cache` directories.
 
 ## Troubleshooting
 

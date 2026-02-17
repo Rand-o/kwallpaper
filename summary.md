@@ -55,7 +55,7 @@ kwallpaper/
 
 ### 1. Configuration Management
 
-**Default config location:** `~/.config/wallpaper-changer/config.json`
+**Default config location:** `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
 
 ```json
 {
@@ -94,7 +94,7 @@ kwallpaper/
 - Theme metadata JSON (e.g., `24hr-Tahoe-2026.json`)
 
 **Extraction process:**
-1. Creates cache directory: `~/.cache/wallpaper-changer/{theme-name}/`
+1. Creates cache directory: `~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer/{theme-name}/`
 2. Extracts zip contents to cache directory
 3. Finds and parses theme metadata JSON
 4. Normalizes image lists (ensures image 1 in sunrise)

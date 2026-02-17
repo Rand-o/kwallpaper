@@ -40,11 +40,22 @@ else:
 # CONFIGURATION
 # ============================================================================
 
-DEFAULT_CONFIG_PATH = Path.home() / ".config" / "wallpaper-changer" / "config.json"
-DEFAULT_CACHE_DIR = Path.home() / ".cache" / "wallpaper-changer"
+# Use Flatpak-specific directories for self-contained storage
+# This ensures the app works consistently across all environments
+DEFAULT_CONFIG_DIR = Path.home() / ".var" / "app" / "org.kde.kwallpaper" / "config" / "wallpaper-changer"
+DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
+DEFAULT_CACHE_DIR = Path.home() / ".var" / "app" / "org.kde.kwallpaper" / "cache" / "wallpaper-changer"
 DEFAULT_SCHEDULE_BACKUP_DIR = DEFAULT_CACHE_DIR / "schedule-backup"
-DEFAULT_THEMES_DIR = Path.home() / ".config" / "wallpaper-changer" / "themes"
-DEFAULT_SHUFFLE_LIST_PATH = Path.home() / ".config" / "wallpaper-changer" / "shuffle-list.json"
+DEFAULT_THEMES_DIR = DEFAULT_CONFIG_DIR / "themes"
+DEFAULT_SHUFFLE_LIST_PATH = DEFAULT_CONFIG_DIR / "shuffle-list.json"
+
+
+def ensure_config_dirs() -> None:
+    """Create config directories if they don't exist."""
+    DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_SCHEDULE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+    DEFAULT_THEMES_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ============================================================================
