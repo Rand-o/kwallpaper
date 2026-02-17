@@ -2169,28 +2169,28 @@ Examples:
     # Change wallpaper command
     change_parser = subparsers.add_parser('change', help='Change wallpaper to next image')
     change_parser.add_argument('--theme-path', required=False, help='Theme folder name (e.g., "24hr-Miami-1") or path to .ddw/extracted theme (optional, uses daily shuffler if not provided)')
-    change_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
+    change_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
     change_parser.add_argument('--monitor', action='store_true', help='Run continuously, cycling wallpapers based on time-of-day')
     change_parser.add_argument('--time', help='Specific time to use for wallpaper selection (HH:MM format)')
 
     # Cycle command - change to next image in current theme based on current time
     cycle_parser = subparsers.add_parser('cycle', help='Cycle to next image in current theme based on current time')
-    cycle_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
+    cycle_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
 
     # Shuffle list command - print current shuffle list state
     shuffle_list_parser = subparsers.add_parser('shuffle-list', help='Print current shuffle list state')
-    shuffle_list_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
+    shuffle_list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
     shuffle_list_parser.add_argument('--current', action='store_true', help='Only show the current theme')
 
     # List images command
     list_parser = subparsers.add_parser('list', help='List available images in time-of-day category')
     list_parser.add_argument('--theme-path', required=True, help='Path to extracted theme directory or theme name')
     list_parser.add_argument('--time-of-day', help='Time-of-day category (day/sunset/sunrise/night)')
-    list_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
+    list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
 
     # Status command
     status_parser = subparsers.add_parser('status', help='Check current wallpaper')
-    status_parser.add_argument('--config', help='Path to config file (default: ~/.config/wallpaper-changer/config.json)')
+    status_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
 
     # Themes management command
     themes_parser = subparsers.add_parser('themes', help='Manage themes')
@@ -2264,8 +2264,8 @@ def run_cycle_command(args) -> int:
         current_wallpaper_path = Path(current_wallpaper)
         
         # Extract theme name from the wallpaper path
-        # Current wallpaper is in ~/.cache/wallpaper-changer/THEME_NAME/
-        # Themes are stored in ~/.config/wallpaper-changer/themes/THEME_NAME/
+        # Current wallpaper is in ~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer/THEME_NAME/
+        # Themes are stored in ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/themes/THEME_NAME/
         theme_name = current_wallpaper_path.parent.name
         
         # Look for the theme in the themes directory
