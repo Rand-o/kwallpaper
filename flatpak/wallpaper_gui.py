@@ -308,6 +308,9 @@ class ThemesPage(QWidget):
     def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
         self._cfg = config_path
+        # Ensure config directories exist before any operations
+        from kwallpaper.wallpaper_changer import ensure_config_dirs
+        ensure_config_dirs()
         self._build()
 
     # ── construction ----------------------------------------------------------
@@ -536,6 +539,9 @@ class SettingsPage(QWidget):
     def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
         self._cfg = config_path
+        # Ensure config directories exist before any operations
+        from kwallpaper.wallpaper_changer import ensure_config_dirs
+        ensure_config_dirs()
         self._build()
         self._load()
 
@@ -673,6 +679,9 @@ class SchedulerPage(QWidget):
     def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
         self._cfg = config_path
+        # Ensure config directories exist before any operations
+        from kwallpaper.wallpaper_changer import ensure_config_dirs
+        ensure_config_dirs()
         self.scheduler: Optional[SchedulerManager] = None
         self._build()
         self._init_scheduler()
@@ -789,6 +798,10 @@ class WallpaperChangerWindow(QMainWindow):
         _main_window = self
         self._cfg = config_path or str(DEFAULT_CONFIG_PATH)
         self._qs  = QSettings(ORG_NAME, APP_NAME)
+        
+        # Ensure config directories exist before any operations
+        from kwallpaper.wallpaper_changer import ensure_config_dirs
+        ensure_config_dirs()
 
         self._build_ui()
         self._build_tray()

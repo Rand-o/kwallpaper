@@ -50,12 +50,76 @@ DEFAULT_THEMES_DIR = DEFAULT_CONFIG_DIR / "themes"
 DEFAULT_SHUFFLE_LIST_PATH = DEFAULT_CONFIG_DIR / "shuffle-list.json"
 
 
+def create_default_config(config_path: str) -> Dict[str, Any]:
+    """Create default configuration if it doesn't exist.
+    
+    Args:
+        config_path: Path to config file
+        
+    Returns:
+        Default configuration dictionary
+    """
+    DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    config_path_obj = Path(config_path)
+    
+    if not config_path_obj.exists():
+        default_config = {
+            "interval": 60,
+            "retry_attempts": 3,
+            "retry_delay": 2,
+            "scheduling": {
+                "interval": 60,
+                "run_cycle": True,
+                "daily_shuffle_enabled": True
+            },
+            "location": {
+                "timezone": "America/Phoenix",
+                "latitude": 33.4484,
+                "longitude": -112.074
+            },
+            "theme": {
+                "last_applied": ""
+            },
+            "application": {
+                "theme_mode": "system"
+            }
+        }
+        with open(config_path, 'w') as f:
+            json.dump(default_config, f, indent=2, sort_keys=True)
+        
+        # Create backup.json file
+        create_backup_file()
+        return default_config
+    
+    return load_config(config_path)
+
+
 def ensure_config_dirs() -> None:
-    """Create config directories if they don't exist."""
+    """Create config directories and default config if they don't exist."""
     DEFAULT_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_CACHE_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_SCHEDULE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     DEFAULT_THEMES_DIR.mkdir(parents=True, exist_ok=True)
+    
+    # Create default config if missing (also creates backup.json)
+    create_default_config(str(DEFAULT_CONFIG_PATH))
+
+
+def create_backup_file() -> None:
+    """Create backup.json file if it doesn't exist."""
+    backup_path = DEFAULT_SCHEDULE_BACKUP_DIR / "backup.json"
+    backup_path.parent.mkdir(parents=True, exist_ok=True)
+    if not backup_path.exists():
+        default_backup = {
+            "last_schedule_state": {
+                "last_theme_path": "",
+                "last_change_date": "",
+                "current_index": 0
+            },
+            "theme_history": []
+        }
+        with open(backup_path, 'w') as f:
+            json.dump(default_backup, f, indent=2)
 
 
 # ============================================================================
@@ -285,13 +349,14 @@ def load_config(config_path: str) -> Dict[str, Any]:
         Configuration dictionary
 
     Raises:
-        FileNotFoundError: If config file doesn't exist
         ValueError: If config file contains invalid JSON
     """
+    ensure_config_dirs()
+    
     config_path_obj = Path(config_path)
-
+    
     if not config_path_obj.exists():
-        raise FileNotFoundError(f"Config file not found: {config_path}")
+        create_default_config(config_path)
 
     try:
         with open(config_path, 'r') as f:
@@ -375,7 +440,7 @@ def extract_theme(zip_path: str, cleanup: bool = False, extract_dir: Optional[Pa
     Args:
         zip_path: Path to .ddw zip file
         cleanup: If True, remove temp directory after extraction
-        extract_dir: Optional custom directory to extract to (default: DEFAULT_CACHE_DIR)
+        extract_dir: Optional custom directory to extract to (default: DEFAULT_THEMES_DIR)
 
     Returns:
         Dictionary containing theme metadata:
@@ -396,8 +461,8 @@ def extract_theme(zip_path: str, cleanup: bool = False, extract_dir: Optional[Pa
     if not zip_path_obj.exists():
         raise FileNotFoundError(f"Theme not found: {zip_path}")
 
-    # Use custom extract_dir if provided, otherwise use DEFAULT_CACHE_DIR
-    target_extract_dir = extract_dir if extract_dir else DEFAULT_CACHE_DIR
+    # Use custom extract_dir if provided, otherwise use DEFAULT_THEMES_DIR
+    target_extract_dir = extract_dir if extract_dir else DEFAULT_THEMES_DIR
     
     # Create directory with the same name as zip file (without extension)
     extract_dir = target_extract_dir / zip_path_obj.stem
