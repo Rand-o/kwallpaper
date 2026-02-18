@@ -2,7 +2,7 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-BUNDLE_NAME="org.kde.kwallpaper"
+BUNDLE_NAME="top.spelunk.kwallpaper"
 BUNDLE_DIR="$SCRIPT_DIR/bundle"
 
 if ! command -v flatpak build-bundle &> /dev/null; then

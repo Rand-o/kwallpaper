@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=kWallpaper
+Comment=Automatically change KDE Plasma wallpapers based on time-of-day
+Exec=flatpak run top.spelunk.kwallpaper
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel
+AutostartCondition=if-kde

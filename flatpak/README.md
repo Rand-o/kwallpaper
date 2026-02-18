@@ -54,11 +54,28 @@ flatpak install --user bundle/org.kde.kwallpaper.flatpak
 ### Configuration Storage
 
 The app stores configuration, themes, and cache in Flatpak-specific paths:
-- **Config**: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/`
-- **Cache**: `~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer/`
-- **Themes**: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/themes/`
+- **Config**: `~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/`
+- **Cache**: `~/.var/app/top.spelunk.kwallpaper/cache/kwallpaper/`
+- **Themes**: `~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/themes/`
 
 These paths are self-contained and don't require access to the host's `~/.config` or `~/.cache` directories.
+
+### Multi-monitor wallpaper support
+
+**Note:** The Flatpak sandbox prevents direct access to `plasma-apply-wallpaperimage`. The DBus implementation using `evaluateScript` now iterates through all available screens via `desktops()` and sets the wallpaper on each one.
+
+**How it works:**
+- Uses QML script with `desktops()` API to get all desktop objects
+- Iterates through each desktop and calls `writeConfig("Image", ...)` 
+- Properly handles `file://` URLs for image paths
+
+**Filesystem permissions needed:**
+- Images must be accessible from within the Flatpak sandbox
+- The flatpak manifest must include filesystem access for image locations
+
+**Known limitations:**
+1. Images must be in Flatpak-accessible paths (e.g., `~/.var/app/top.spelunk.kwallpaper/`)
+2. For full system access, add `--filesystem=host:ro` to finish-args (not recommended for security)
 
 ## Troubleshooting
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-KDE Wallpaper Changer — Native KDE Plasma 6 Application
+kWallpaper — Native KDE Plasma 6 Application
 
 Integrates with the KDE desktop by:
   • Using system Breeze styling and icons via QPalette / QIcon.fromTheme()
@@ -35,6 +35,7 @@ try:
     )
     from PyQt6.QtGui import (
         QPixmap, QColor, QPainter, QPen, QIcon, QPalette, QFontDatabase,
+        QImageReader,
     )
     PYQT6_AVAILABLE = True
 except ImportError:
@@ -53,7 +54,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-APP_NAME    = "Wallpaper Changer"
+APP_NAME    = "kWallpaper"
 APP_VERSION = "1.0.0"
 ORG_NAME    = "kwallpaper"
 SOCKET_PORT = 28765
@@ -193,6 +194,11 @@ class ImageCrossFadeWidget(QWidget):
         self._timer.setInterval(2700)   # 1.5 s hold + 1.2 s fade = 2.7 s per frame
         self._timer.timeout.connect(self._advance)
 
+        # Lazy load timer for background image loading
+        self._load_timer = QTimer(self)
+        self._load_timer.setSingleShot(True)
+        self._load_timer.timeout.connect(self._load_next_image)
+
     # -- animated property -----------------------------------------------------
     @pyqtProperty(float)
     def blendValue(self) -> float:
@@ -205,17 +211,20 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- public API ------------------------------------------------------------
     def set_images(self, paths: list[str]):
-        """Load images and pre-cache for smooth playback."""
+        """Load images with lazy loading for instant UI response."""
         self._timer.stop()
         self._anim.stop()
         self._cache.clear()
         self._images = paths
         self._idx = 0
         self._blend = 0.0
-        # Pre-cache first 2 images for immediate playback
+        # Only preload first 2 images - lazy load rest
         for i in range(min(2, len(paths))):
             self._ensure(i)
         self.update()
+        # Schedule background loading of remaining images
+        if len(paths) > 2:
+            self._schedule_lazy_load()
     def start(self):
         if len(self._images) > 1:
             self._timer.start()
@@ -223,15 +232,19 @@ class ImageCrossFadeWidget(QWidget):
     def stop(self):
         self._timer.stop()
         self._anim.stop()
+        self._load_timer.stop()
 
     # -- internals -------------------------------------------------------------
     def _ensure(self, idx: int):
         """Load image into cache if not already present, with LRU eviction."""
         if idx in self._cache or not (0 <= idx < len(self._images)):
             return
-        pm = QPixmap(self._images[idx])
-        if not pm.isNull():
-            self._cache[idx] = pm
+        # Use QImageReader for faster format detection and loading
+        reader = QImageReader(self._images[idx])
+        if reader.canRead():
+            pm = QPixmap.fromImage(reader.read())
+            if not pm.isNull():
+                self._cache[idx] = pm
         # Evict oldest cached image if we have too many
         if len(self._cache) > 3:
             oldest = next(iter(self._cache))
@@ -246,11 +259,27 @@ class ImageCrossFadeWidget(QWidget):
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.start()
+        # Schedule lazy loading of next images after animation starts
+        self._schedule_lazy_load()
 
     def _on_fade_done(self):
         self._idx = (self._idx + 1) % len(self._images)
         self._blend = 0.0
         self.update()
+
+    def _schedule_lazy_load(self):
+        """Schedule loading of next images after animation completes."""
+        self._load_timer.stop()
+        # Load next 2 images after current animation completes (1.2s)
+        self._load_timer.start(1250)
+
+    def _load_next_image(self):
+        """Load next images in background when idle."""
+        # Load images 2 and 3 (indices 1 and 2 in 0-based)
+        next_indices = [self._idx + 1, self._idx + 2]
+        for idx in next_indices:
+            if 0 <= idx < len(self._images) and idx not in self._cache:
+                self._ensure(idx)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -311,6 +340,8 @@ class ThemesPage(QWidget):
         # Ensure config directories exist before any operations
         from kwallpaper.wallpaper_changer import ensure_config_dirs
         ensure_config_dirs()
+        # Cache for image paths per theme (path -> list[str])
+        self._image_cache: dict[str, list[str]] = {}
         self._build()
 
     # ── construction ----------------------------------------------------------
@@ -410,18 +441,26 @@ class ThemesPage(QWidget):
         self.info.setText(f"{len(imgs)} images")
 
     def _import(self):
-        path, _ = QFileDialog.getOpenFileName(
+        paths, _ = QFileDialog.getOpenFileNames(
             self, "Import Theme", "",
             "Theme Files (*.ddw *.zip);;All Files (*)")
-        if not path:
+        if not paths:
             return
-        try:
-            extract_theme(path, cleanup=False)
-            self.load_themes()
-            self._status("Theme imported successfully")
-        except Exception as e:
-            logger.error(f"Import failed: {e}")
-            QMessageBox.warning(self, "Import Failed", str(e))
+        imported = 0
+        failed = 0
+        for path in paths:
+            try:
+                extract_theme(path, cleanup=False)
+                imported += 1
+            except Exception as e:
+                logger.error(f"Import failed for {path}: {e}")
+                failed += 1
+        
+        self.load_themes()
+        if imported > 0:
+            self._status(f"{imported} theme(s) imported successfully")
+        if failed > 0:
+            QMessageBox.warning(self, "Import Failed", f"Failed to import {failed} file(s)")
 
     def _apply(self):
         cur = self.theme_list.currentItem()
@@ -500,8 +539,39 @@ class ThemesPage(QWidget):
         if isinstance(w, QMainWindow):
             w.statusBar().showMessage(msg, ms)
 
+    def _discover_images(self, theme_path: str) -> list[str]:
+        """Discover all image files in theme directory in one glob call."""
+        images = []
+        try:
+            # Single glob to get all JPEG/PNG files - much faster than 3 globs
+            for f in Path(theme_path).glob("*.jpeg"):
+                images.append((f.stem, str(f)))
+            for f in Path(theme_path).glob("*.jpg"):
+                images.append((f.stem, str(f)))
+            for f in Path(theme_path).glob("*.png"):
+                images.append((f.stem, str(f)))
+
+            # Filter for index pattern and sort by index
+            result: list[str] = []
+            for name, path in sorted(images, key=lambda x: int(x[0].rsplit("_", 1)[-1])):
+                try:
+                    if "_" in name:
+                        idx = int(name.rsplit("_", 1)[-1])
+                        if 1 <= idx <= 16:
+                            result.append(path)
+                except (ValueError, IndexError):
+                    continue
+            return result
+        except Exception as e:
+            logger.error(f"Image discovery error: {e}")
+            return []
+
     def _images_for(self, theme_path: str) -> list[str]:
         """Return sorted image file paths (indices 1-16) for a theme."""
+        # Check cache first - eliminates 48+ glob() calls on repeated selection
+        if theme_path in self._image_cache:
+            return self._image_cache[theme_path]
+
         result: list[str] = []
         try:
             jf = next(Path(theme_path).glob("*.json"), None)
@@ -509,26 +579,24 @@ class ThemesPage(QWidget):
                 return result
             with open(jf) as fh:
                 data = json.load(fh)
-            # Always try all 16 indices so the timelapse is complete
-            for i in range(1, 17):
-                fp = self._find(theme_path, i)
-                if fp:
-                    result.append(fp)
-        except Exception as e:
-            logger.error(f"Image list error: {e}")
-        return result
-
-    @staticmethod
-    def _find(theme_dir: str, index: int) -> Optional[str]:
-        for ext in ("*.jpeg", "*.jpg", "*.png"):
-            for f in Path(theme_dir).glob(ext):
+            # Discover images in one pass instead of 48 individual calls
+            images = self._discover_images(theme_path)
+            # Filter to indices 1-16
+            for path in images:
+                stem = Path(path).stem
                 try:
-                    if "_" in f.stem \
-                       and int(f.stem.rsplit("_", 1)[-1]) == index:
-                        return str(f)
+                    if "_" in stem:
+                        idx = int(stem.rsplit("_", 1)[-1])
+                        if 1 <= idx <= 16:
+                            result.append(path)
                 except (ValueError, IndexError):
                     continue
-        return None
+        except Exception as e:
+            logger.error(f"Image list error: {e}")
+        # Cache the result for future theme selections
+        if result:
+            self._image_cache[theme_path] = result
+        return result
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -595,6 +663,11 @@ class SettingsPage(QWidget):
         self.scheme.setToolTip(
             "Override the colour scheme or follow the system KDE theme")
         self.scheme.currentIndexChanged.connect(self._on_scheme)
+        
+        # Autostart at login
+        self.autostart = QCheckBox("Start automatically at login")
+        self.autostart.toggled.connect(self._on_autostart)
+        af.addRow(self.autostart)
         af.addRow("Color scheme:", self.scheme)
         col.addWidget(ag)
 
@@ -629,6 +702,8 @@ class SettingsPage(QWidget):
             self.scheme.blockSignals(True)
             self.scheme.setCurrentIndex(idx)
             self.scheme.blockSignals(False)
+            autostart = c.get("application", {}).get("autostart", False)
+            self.autostart.setChecked(autostart)
         except Exception as e:
             logger.warning(f"Config load: {e}")
 
@@ -648,7 +723,21 @@ class SettingsPage(QWidget):
             scheme_map = {0: "system", 1: "light", 2: "dark"}
             c.setdefault("application", {})["theme_mode"] = \
                 scheme_map.get(self.scheme.currentIndex(), "system")
+            c["application"].setdefault("autostart", self.autostart.isChecked())
             save_config(self._cfg, c)
+            
+            autostart_dir = Path.home() / ".config" / "autostart"
+            autostart_file = autostart_dir / "org.kde.kwallpaper.desktop"
+            if self.autostart.isChecked():
+                autostart_dir.mkdir(parents=True, exist_ok=True)
+                source_file = Path(__file__).parent / "autostart.desktop"
+                if source_file.exists():
+                    import shutil
+                    shutil.copy2(str(source_file), str(autostart_file))
+            else:
+                if autostart_file.exists():
+                    autostart_file.unlink()
+            
             w = self.window()
             if isinstance(w, QMainWindow):
                 w.statusBar().showMessage("Settings saved", 4000)
@@ -667,6 +756,22 @@ class SettingsPage(QWidget):
             save_config(self._cfg, c)
         except Exception:
             pass
+
+    def _on_autostart(self, enabled: bool):
+        autostart_dir = Path.home() / ".config" / "autostart"
+        autostart_file = autostart_dir / "org.kde.kwallpaper.desktop"
+        
+        if enabled:
+            autostart_dir.mkdir(parents=True, exist_ok=True)
+            source_file = Path(__file__).parent / "autostart.desktop"
+            if source_file.exists():
+                import shutil
+                shutil.copy2(str(source_file), str(autostart_file))
+                logger.info("Autostart enabled")
+        else:
+            if autostart_file.exists():
+                autostart_file.unlink()
+                logger.info("Autostart disabled")
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop">
-  <id>org.kde.kwallpaper</id>
+  <id>top.spelunk.kwallpaper</id>
   <name>KDE Wallpaper Changer</name>
   <summary>Automatically change KDE Plasma wallpapers based on time-of-day</summary>
   <description>
@@ -17,7 +17,7 @@
   <url type="homepage">https://github.com/Rand-o/kwallpaper</url>
   <url type="bugtracker">https://github.com/Rand-o/kwallpaper/issues</url>
   <provides>
-    <id>org.kde.wallpaper-changer.desktop</id>
+    <id>top.spelunk.kwallpaper.desktop</id>
   </provides>
   <content_rating type="oars-1.1" />
   <releases>
@@ -28,6 +28,6 @@
     </release>
   </releases>
   <developer id="com.github.rando" name="Rand-o" />
-  <launchable type="desktop-id">org.kde.kwallpaper.desktop</launchable>
+  <launchable type="desktop-id">top.spelunk.kwallpaper.desktop</launchable>
   <metadata_license>MIT</metadata_license>
 </component>

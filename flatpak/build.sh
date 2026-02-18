@@ -2,8 +2,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MANIFEST="$SCRIPT_DIR/org.kde.kwallpaper.json"
-BUNDLE_NAME="org.kde.kwallpaper"
+MANIFEST="$SCRIPT_DIR/top.spelunk.kwallpaper.json"
+BUNDLE_NAME="top.spelunk.kwallpaper"
 DEPS_DIR="$SCRIPT_DIR/flatpak-deps"
 
 if ! command -v flatpak-builder &> /dev/null; then

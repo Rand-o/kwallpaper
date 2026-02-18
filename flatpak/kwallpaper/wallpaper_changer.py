@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-KDE Wallpaper Changer - Core functionality module.
+kWallpaper - Core functionality module.
 
-This module provides all core functions for the KDE Wallpaper Changer tool,
+This module provides all core functions for the kWallpaper tool,
 including config management, theme extraction, image selection, and wallpaper changes.
 """
 
@@ -18,7 +18,7 @@ import subprocess
 import zipfile
 import tempfile
 import time
-from typing import Optional, Dict, Any, TYPE_CHECKING, cast
+from typing import Optional, Dict, Any, TYPE_CHECKING, cast, Tuple, List
 
 if TYPE_CHECKING:
     try:
@@ -42,9 +42,9 @@ else:
 
 # Use Flatpak-specific directories for self-contained storage
 # This ensures the app works consistently across all environments
-DEFAULT_CONFIG_DIR = Path.home() / ".var" / "app" / "org.kde.kwallpaper" / "config" / "wallpaper-changer"
+DEFAULT_CONFIG_DIR = Path.home() / ".var" / "app" / "top.spelunk.kwallpaper" / "config" / "kwallpaper"
 DEFAULT_CONFIG_PATH = DEFAULT_CONFIG_DIR / "config.json"
-DEFAULT_CACHE_DIR = Path.home() / ".var" / "app" / "org.kde.kwallpaper" / "cache" / "wallpaper-changer"
+DEFAULT_CACHE_DIR = Path.home() / ".var" / "app" / "top.spelunk.kwallpaper" / "cache" / "kwallpaper"
 DEFAULT_SCHEDULE_BACKUP_DIR = DEFAULT_CACHE_DIR / "schedule-backup"
 DEFAULT_THEMES_DIR = DEFAULT_CONFIG_DIR / "themes"
 DEFAULT_SHUFFLE_LIST_PATH = DEFAULT_CONFIG_DIR / "shuffle-list.json"
@@ -91,7 +91,8 @@ def create_default_config(config_path: str) -> Dict[str, Any]:
         create_backup_file()
         return default_config
     
-    return load_config(config_path)
+    with open(config_path, 'r') as f:
+        return json.load(f)
 
 
 def ensure_config_dirs() -> None:
@@ -128,16 +129,13 @@ def create_backup_file() -> None:
 import random
 
 
+_discover_cache: Optional[Tuple[float, List[Tuple[str, str]]]] = None
+_DISCOVER_CACHE_TIMEOUT = 2.0
+
+
 def discover_themes() -> list:
-    """Discover all extracted theme directories in the themes directory.
+    global _discover_cache
     
-    Returns:
-        List of (theme_name, theme_path) tuples for valid theme directories
-        
-    Raises:
-        FileNotFoundError: If themes directory doesn't exist
-        PermissionError: If themes directory is inaccessible
-    """
     themes_dir = DEFAULT_THEMES_DIR
     
     if not themes_dir.exists():
@@ -146,30 +144,25 @@ def discover_themes() -> list:
     if not themes_dir.is_dir():
         raise PermissionError(f"Themes path is not a directory: {themes_dir}")
     
+    if _discover_cache is not None:
+        cache_time, cached_themes = _discover_cache
+        if (time.time() - cache_time) < _DISCOVER_CACHE_TIMEOUT:
+            return cached_themes
+    
     themes = []
     
-    # Find all theme directories (extracted .ddw folders)
-    for theme_dir in themes_dir.iterdir():
-        try:
-            # Check if it's a directory and contains theme.json
-            if theme_dir.is_dir():
-                # Look for theme.json in the directory
-                theme_json_path = None
-                for json_file in theme_dir.glob("*.json"):
-                    theme_json_path = json_file
-                    break
-                
-                if not theme_json_path:
-                    for found_path in theme_dir.rglob("theme.json"):
-                        theme_json_path = found_path
-                        break
-                
-                if theme_json_path:
-                    theme_name = theme_dir.name
-                    themes.append((theme_name, str(theme_dir)))
-        except (OSError, PermissionError):
-            # Skip directories that can't be accessed
-            continue
+    try:
+        for theme_dir in themes_dir.iterdir():
+            if not theme_dir.is_dir() or theme_dir.name.startswith('.'):
+                continue
+            json_files = list(theme_dir.glob("*.json"))
+            if json_files:
+                themes.append((theme_dir.name, str(theme_dir)))
+    except (OSError, PermissionError):
+        pass
+    
+    themes.sort(key=lambda t: t[0].lower())
+    _discover_cache = (time.time(), themes)
     
     return themes
 
@@ -1678,7 +1671,9 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
 # ============================================================================
 
 def change_wallpaper(image_path: str) -> bool:
-    """Change KDE Plasma wallpaper to specified image.
+    """Change KDE Plasma wallpaper to specified image using DBus.
+    Sets wallpaper on all available screens using evaluateScript.
+    Falls back to single-screen approach if desktops() is not available.
 
     Args:
         image_path: Path to image file to set as wallpaper
@@ -1687,74 +1682,85 @@ def change_wallpaper(image_path: str) -> bool:
         True if successful, False otherwise
     """
     try:
-        # Check if Plasma is running
+        # Check if Plasma shell is running
         plasma_check = subprocess.run(
-           ['pgrep', '-x', 'plasmashell'],
-           capture_output=True
+            ['gdbus', 'call', '--session', '--dest', 'org.kde.plasmashell', '--object-path', '/PlasmaShell', '--method', 'org.freedesktop.DBus.Peer.Ping'],
+            capture_output=True,
+            text=True
         )
         if plasma_check.returncode != 0:
-           print("Error: Plasma is not running. Please start Plasma first.", file=sys.stderr)
-           return False
+            print("Error: Plasma shell is not running. Please start Plasma first.", file=sys.stderr)
+            return False
 
-        # Try plasma-apply-wallpaperimage first (most reliable)
-        result = subprocess.run(
-           ['plasma-apply-wallpaperimage', image_path],
-           capture_output=True,
-           text=True
+        # Try to get screen count using desktops().length
+        screen_count_script = 'print(desktops().length);'
+        screen_count_result = subprocess.run(
+            ['gdbus', 'call', '--session', '--dest', 'org.kde.plasmashell', '--object-path', '/PlasmaShell', '--method', 'org.kde.PlasmaShell.evaluateScript', screen_count_script],
+            capture_output=True,
+            text=True,
+            timeout=5
         )
-
-        if result.returncode == 0:
-           verify_result = subprocess.run([
-              'kreadconfig5',
-              '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
-              '--group', 'Wallpaper',
-              '--group', 'org.kde.image',
-              '--key', 'Image'
-           ], capture_output=True, text=True)
-           
-           if verify_result.returncode == 0 and verify_result.stdout.strip() == image_path:
-              print("Wallpaper changed successfully!")
-              return True
-           
-           print("plasma-apply-wallpaperimage returned success but wallpaper not updated, using fallback...", file=sys.stderr)
-
-        print("Attempting fallback method using kwriteconfig5...", file=sys.stderr)
-        subprocess.run([
-           'kwriteconfig5',
-           '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
-           '--group', 'Wallpaper',
-           '--group', 'org.kde.image',
-           '--key', 'Image',
-           image_path
-        ], check=False, capture_output=True)
-
-        # Verify wallpaper was set
-        verify_result = subprocess.run([
-           'kreadconfig5',
-           '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
-           '--group', 'Wallpaper',
-           '--group', 'org.kde.image',
-           '--key', 'Image'
-        ], capture_output=True, text=True)
-
-        if verify_result.returncode == 0 and verify_result.stdout.strip():
-           print("Wallpaper changed successfully (using fallback method)", file=sys.stderr)
-           return True
+        
+        # Parse output - try to extract screen count from formats like "('1',)" or "(1,)"
+        import re
+        # First try: extract digit inside quotes like "('1',)"
+        match = re.search(r"'(\d+)'", screen_count_result.stdout)
+        if match:
+            screen_count = int(match.group(1))
         else:
-           print(f"Error: Failed to change wallpaper. plasma-apply-wallpaperimage returned: {result.stderr}", file=sys.stderr)
-           return False
+            # Fallback: try to get the number directly without quotes
+            match = re.search(r'\((\d+),\)', screen_count_result.stdout)
+            if match:
+                screen_count = int(match.group(1))
+            else:
+                # Try just the number alone
+                match = re.search(r'^(\d+)$', screen_count_result.stdout.strip())
+                screen_count = int(match.group(1)) if match else 1
+
+        # If no screens detected (headless or desktops() not available), try setting on screen 0
+        if screen_count < 1:
+            screen_count = 1
+
+        screen_num = 0
+        success_count = 0
+        while True:
+            try:
+                result = subprocess.run(
+                    ['gdbus', 'call', '--session', '--dest', 'org.kde.plasmashell', '--object-path', '/PlasmaShell', '--method', 'org.kde.PlasmaShell.wallpaper', str(screen_num)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if '"Image": <' not in result.stdout and "'Image': <" not in result.stdout:
+                    break
+                wallpaper_param = f"{{'Image': <'file://{image_path}'>}}"
+                set_result = subprocess.run(
+                    ['gdbus', 'call', '--session', '--dest', 'org.kde.plasmashell', '--object-path', '/PlasmaShell', '--method', 'org.kde.PlasmaShell.setWallpaper', 'org.kde.image', wallpaper_param, str(screen_num)],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if set_result.returncode == 0:
+                    success_count += 1
+                screen_num += 1
+            except Exception:
+                break
+
+        if success_count > 0:
+            print(f"Wallpaper changed successfully on {success_count} screen(s)!", file=sys.stderr)
+            return True
+        else:
+            print("Error: Failed to change wallpaper on any screen", file=sys.stderr)
+            return False
 
     except FileNotFoundError as e:
-        print(f"Error: Required command not found: {e}", file=sys.stderr)
+        print(f"Error: gdbus command not found: {e}", file=sys.stderr)
         return False
     except subprocess.CalledProcessError as e:
         print(f"Error: Failed to change wallpaper: {e.stderr}", file=sys.stderr)
         return False
 
 
-# ============================================================================
-# CLI SUBCOMMANDS
-# ============================================================================
 
 def validate_time_of_day(time_of_day: str) -> bool:
     """Validate time-of-day category.
@@ -2189,7 +2195,7 @@ def run_status_command(args) -> int:
 def main():
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
-        description="KDE Wallpaper Changer - Automatically change wallpapers based on time-of-day",
+        description="kWallpaper - Automatically change wallpapers based on time-of-day",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -2234,28 +2240,28 @@ Examples:
     # Change wallpaper command
     change_parser = subparsers.add_parser('change', help='Change wallpaper to next image')
     change_parser.add_argument('--theme-path', required=False, help='Theme folder name (e.g., "24hr-Miami-1") or path to .ddw/extracted theme (optional, uses daily shuffler if not provided)')
-    change_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
+    change_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
     change_parser.add_argument('--monitor', action='store_true', help='Run continuously, cycling wallpapers based on time-of-day')
     change_parser.add_argument('--time', help='Specific time to use for wallpaper selection (HH:MM format)')
 
     # Cycle command - change to next image in current theme based on current time
     cycle_parser = subparsers.add_parser('cycle', help='Cycle to next image in current theme based on current time')
-    cycle_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
+    cycle_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
 
     # Shuffle list command - print current shuffle list state
     shuffle_list_parser = subparsers.add_parser('shuffle-list', help='Print current shuffle list state')
-    shuffle_list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
+    shuffle_list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
     shuffle_list_parser.add_argument('--current', action='store_true', help='Only show the current theme')
 
     # List images command
     list_parser = subparsers.add_parser('list', help='List available images in time-of-day category')
     list_parser.add_argument('--theme-path', required=True, help='Path to extracted theme directory or theme name')
     list_parser.add_argument('--time-of-day', help='Time-of-day category (day/sunset/sunrise/night)')
-    list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
+    list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
 
     # Status command
     status_parser = subparsers.add_parser('status', help='Check current wallpaper')
-    status_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json)')
+    status_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
 
     # Themes management command
     themes_parser = subparsers.add_parser('themes', help='Manage themes')
@@ -2329,8 +2335,8 @@ def run_cycle_command(args) -> int:
         current_wallpaper_path = Path(current_wallpaper)
         
         # Extract theme name from the wallpaper path
-        # Current wallpaper is in ~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer/THEME_NAME/
-        # Themes are stored in ~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/themes/THEME_NAME/
+        # Current wallpaper is in ~/.var/app/top.spelunk.kwallpaper/cache/kwallpaper/THEME_NAME/
+        # Themes are stored in ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/themes/THEME_NAME/
         theme_name = current_wallpaper_path.parent.name
         
         # Look for the theme in the themes directory

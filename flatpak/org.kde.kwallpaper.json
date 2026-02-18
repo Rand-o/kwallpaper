@@ -1,5 +1,5 @@
 {
-  "id": "org.kde.kwallpaper",
+  "id": "top.spelunk.kwallpaper",
   "runtime": "org.kde.Platform",
   "runtime-version": "6.9",
   "sdk": "org.kde.Sdk//6.9",
@@ -9,8 +9,8 @@
     "--socket=fallback-x11",
     "--socket=wayland",
     "--socket=session-bus",
-    "--filesystem=~/.var/app/org.kde.kwallpaper/config/wallpaper-changer:rw",
-    "--filesystem=~/.var/app/org.kde.kwallpaper/cache/wallpaper-changer:rw"
+    "--filesystem=~/.var/app/top.spelunk.kwallpaper/config/kwallpaper:rw",
+    "--filesystem=~/.var/app/top.spelunk.kwallpaper/cache/kwallpaper:rw"
   ],
   "modules": [
     {
@@ -67,10 +67,10 @@
         "cp wallpaper-gui /app/bin/",
         "chmod +x /app/bin/wallpaper-gui",
         "mkdir -p /app/share/applications",
-        "cp org.kde.kwallpaper.desktop /app/share/applications/",
+        "cp top.spelunk.kwallpaper.desktop /app/share/applications/",
         "mkdir -p /app/share/metainfo",
         "# Skip metainfo for now - icon issue needs fixing",
-        "# cp org.kde.kwallpaper.metainfo.xml /app/share/metainfo/",
+        "# cp top.spelunk.kwallpaper.metainfo.xml /app/share/metainfo/",
         "mkdir -p /app/share/kwallpaper/kwallpaper",
         "cp -r kwallpaper/* /app/share/kwallpaper/kwallpaper/",
         "cp wallpaper_gui.py /app/share/kwallpaper/",
