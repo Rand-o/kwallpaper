@@ -1,5 +1,0 @@
-Files exist at root after move:
-  - wallpaper_cli.py (676 bytes)
-  - wallpaper_gui.py (45224 bytes)
-
-Verification: PASSED
