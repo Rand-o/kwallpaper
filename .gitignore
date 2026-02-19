@@ -38,14 +38,10 @@ Thumbs.db
 # Logs
 *.log
 
-# Distribution / packaging
-*.tar.gz
-*.flatpak
-
 # Sisyphus planning files (local development only)
 .sisyphus/
 
-# Flatpak build artifacts (remove when not needed)
+# Flatpak build artifacts (should not be tracked in git)
 flatpak/.flatpak-builder/
 flatpak/flatpak-repo/
 flatpak/flatpak-deps/
