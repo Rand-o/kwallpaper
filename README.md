@@ -335,13 +335,14 @@ python3 -m pytest tests/ -v
 ### Project Structure
 ```
 kwallpaper/
-├── wallpaper_gui.py              # Main GUI application (1069 lines)
-├── wallpaper_cli.py              # CLI wrapper (29 lines)
+├── wallpaper_gui.py              # Main GUI application (1186 lines)
+├── wallpaper_cli.py              # CLI entry point (29 lines)
 ├── kwallpaper/
 │   ├── __init__.py               # Package init
-│   ├── wallpaper_changer.py      # Core functionality (848 lines)
-│   ├── scheduler.py              # Background scheduler (243 lines)
+│   ├── wallpaper_changer.py      # Core functionality (2678 lines)
+│   ├── scheduler.py              # Background scheduler (242 lines)
 │   └── shuffle_list_manager.py   # Theme shuffling (186 lines)
+│
 ├── tests/
 │   ├── test_config.py
 │   ├── test_config_validation.py
@@ -357,6 +358,22 @@ kwallpaper/
 ## License
 
 This project is provided as-is for personal use.
+
+## Flatpak
+
+A Flatpak bundle is available for easy installation. To build the Flatpak:
+
+```bash
+cd flatpak
+./build.sh
+```
+
+This creates a self-contained bundle with all Python dependencies embedded. Install with:
+```bash
+flatpak install --user bundle/top.spelunk.kwallpaper.flatpak
+```
+
+**Note**: The Flatpak uses Python 3.12 (matching bundled wheel dependencies).
 
 ## Acknowledgments
 
@@ -376,3 +393,7 @@ This project is provided as-is for personal use.
 - Multiple tab interface (Themes, Settings, Scheduler)
 - Configurable color scheme (system/light/dark)
 - Background wallpaper rotation
+
+### Future
+- [ ] Flatpak bundle with embedded Python dependencies
+- [ ] CLI-only version without GUI
