@@ -1,6 +1,8 @@
 # KDE Wallpaper Changer
 
-A beautiful, native KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
+A beautiful, native styled KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
+
+This project was vibe coded with Qwen3-Coder-Next and in some part GLM-4.7-Flash. I used to use a program on Mac OS called 24hr Wallpaper and I really missed having it when I moved to KDE (Linux). This program works in conjunction with themes you can get at https://www.jetsoncreative.com/24hourwindows and will change the wallpaper using those these based on what time of day it is at the location you configure.
 
 ![GUI Interface](screenshots/) *Native KDE Plasma integration with Breeze styling*
 
