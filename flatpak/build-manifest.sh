@@ -34,13 +34,13 @@ cat > /home/admin/llama-cpp/projects/kwallpaper/flatpak/org.kde.kwallpaper.json 
             "buildsystem": "simple",
             "build-commands": [
                 "pip3 install --no-build-isolation .",
-                "install -Dm644 flatpak/org.kde.kwallpaper.desktop /app/share/applications/org.kde.kwallpaper.desktop",
-                "install -Dm644 flatpak/org.kde.kwallpaper.metainfo.xml /app/share/metainfo/org.kde.kwallpaper.metainfo.xml"
+                "install -Dm644 org.kde.kwallpaper.desktop /app/share/applications/org.kde.kwallpaper.desktop",
+                "install -Dm644 org.kde.kwallpaper.metainfo.xml /app/share/metainfo/org.kde.kwallpaper.metainfo.xml"
             ],
             "sources": [
                 {
                     "type": "dir",
-                    "path": "."
+                    "path": ".."
                 }
             ]
         }

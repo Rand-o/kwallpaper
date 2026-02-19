@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Exec=wallpaper-gui --start-scheduler
+Hidden=false
+NoDisplay=false
+X-GNOME-Autostart-enabled=true
+Name=kwallpaper-autostart
+Comment=Start kwallpaper scheduler on login

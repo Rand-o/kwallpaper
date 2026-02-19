@@ -18,9 +18,10 @@
     {
       "name": "python-deps",
       "buildsystem": "simple",
-"build-commands": [
+      "build-commands": [
+        "cp flatpak-deps/*.whl .",
         "mkdir -p /app/lib/python3.12/site-packages",
-        "pip3 install --no-index --find-links=. --target=/app/lib/python3.12/site-packages --upgrade tzlocal-5.3.1-py3-none-any.whl apscheduler-3.11.2-py3-none-any.whl astral-3.2-py3-none-any.whl pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl pyqt6_qt6-6.9.2-py3-none-manylinux_2_28_x86_64.whl pyqt6-6.9.1-cp39-abi3-manylinux_2_28_x86_64.whl python_dateutil-2.9.0.post0-py2.py3-none-any.whl pytz-2025.2-py2.py3-none-any.whl six-1.17.0-py2.py3-none-any.whl"
+        "pip3 install --no-index --find-links=. --target=/app/lib/python3.12/site-packages --upgrade tzlocal-5.3.1-py3-none-any.whl apscheduler-3.11.2-py3-none-any.whl astral-3.2-py3-none-any.whl pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl pyqt6_qt6-6.10.2-py3-none-manylinux_2_34_x86_64.whl pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl python_dateutil-2.9.0.post0-py2.py3-none-any.whl pytz-2025.2-py2.py3-none-any.whl six-1.17.0-py2.py3-none-any.whl"
       ],
       "sources": [
         {
@@ -41,11 +42,11 @@
         },
         {
           "type": "file",
-          "path": "flatpak-deps/pyqt6_qt6-6.9.2-py3-none-manylinux_2_28_x86_64.whl"
+          "path": "flatpak-deps/pyqt6_qt6-6.10.2-py3-none-manylinux_2_34_x86_64.whl"
         },
         {
           "type": "file",
-          "path": "flatpak-deps/pyqt6-6.9.1-cp39-abi3-manylinux_2_28_x86_64.whl"
+          "path": "flatpak-deps/pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl"
         },
         {
           "type": "file",
@@ -58,31 +59,33 @@
         {
           "type": "file",
           "path": "flatpak-deps/six-1.17.0-py2.py3-none-any.whl"
+        },
+        {
+          "type": "dir",
+          "path": "."
         }
       ]
     },
     {
       "name": "kwallpaper",
       "buildsystem": "simple",
-      "build-commands": [
-        "mkdir -p /app/bin",
-        "cp wallpaper-gui /app/bin/",
-        "chmod +x /app/bin/wallpaper-gui",
-        "mkdir -p /app/share/applications",
-        "cp top.spelunk.kwallpaper.desktop /app/share/applications/",
-        "mkdir -p /app/share/metainfo",
-        "# Skip metainfo for now - icon issue needs fixing",
-        "# cp top.spelunk.kwallpaper.metainfo.xml /app/share/metainfo/",
-        "mkdir -p /app/share/kwallpaper/kwallpaper",
-        "cp -r kwallpaper/* /app/share/kwallpaper/kwallpaper/",
-        "cp wallpaper_gui.py /app/share/kwallpaper/",
-        "cp wallpaper_cli.py /app/share/kwallpaper/",
-        "cp top.spelunk.kwallpaper.autostart.desktop /app/share/kwallpaper/autostart.desktop"
-      ],
+"build-commands": [
+          "mkdir -p /app/bin",
+          "cp flatpak/wallpaper-gui /app/bin/",
+          "chmod +x /app/bin/wallpaper-gui",
+          "mkdir -p /app/share/applications",
+          "cp flatpak/top.spelunk.kwallpaper.desktop /app/share/applications/",
+          "mkdir -p /app/share/icons/hicolor/512x512/apps",
+          "cp kwallpaper.svg /app/share/icons/hicolor/512x512/apps/top.spelunk.kwallpaper.svg",
+          "mkdir -p /app/lib/python3/kwallpaper",
+          "cp -r kwallpaper/* /app/lib/python3/kwallpaper/",
+          "cp wallpaper_gui.py /app/lib/python3/",
+          "cp wallpaper_cli.py /app/lib/python3/"
+        ],
       "sources": [
         {
           "type": "dir",
-          "path": "."
+          "path": ".."
         }
       ]
     }

@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=kwallpaper
+Comment=KDE Wallpaper Changer
+Exec=wallpaper-gui
+Icon=wallpaper
+Type=Application
+Categories=Graphics;Photography;
+Keywords=wallpaper;plasma;changer;
+Terminal=false
+

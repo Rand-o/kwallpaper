@@ -1,39 +1,43 @@
+# Flatpak build artifacts
+flatpak/.flatpak-builder/
+flatpak/flatpak-repo/
+flatpak/flatpak-deps/
+flatpak/bundle/
+flatpak/build/
+flatpak/build-files/
+flatpak/repo/
+flatpak/wallpaper-gui
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.so
-.Python
-env/
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environments
 venv/
-ENV/
-.venv
+.venv/
+env/
 
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-test_*/
-
-# User configuration
-.config/
-
-# Data files
-*.ddw
-*.zip
-*.jpeg
-*.jpg
-*.png
-
-# IDE
+# IDE / Editor
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
-# Temporary files
-*.tmp
-*.bak
-.sisyphus/
+# OS files
+.DS_Store
+Thumbs.db
+.directory
 
+# Logs
+*.log
 
+# Distribution / packaging
+*.tar.gz
+*.flatpak

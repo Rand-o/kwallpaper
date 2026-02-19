@@ -2,6 +2,8 @@
 
 This directory contains the Flatpak configuration for building a single-file bundle of KDE Wallpaper Changer.
 
+The application source code is located at the project root, not in this directory. Flatpak uses the "type": "dir" source directive to reference files from the parent directory.
+
 ## Prerequisites
 
 You need `flatpak-builder` installed:
@@ -15,21 +17,6 @@ KDE Platform 6.9 runtime and SDK:
 ```bash
 flatpak install --user org.kde.Platform//6.9
 flatpak install --user org.kde.Sdk//6.9
-```
-
-## Preparing Python Dependencies
-
-Download Python dependencies for Python 3.12:
-
-```bash
-pip download --python-version 312 --only-binary=:all: apscheduler astral pyqt6 pyqt6-sip python_dateutil pytz
-```
-
-Move all `.whl` files to `flatpak-deps/`:
-
-```bash
-mkdir -p flatpak-deps
-mv *.whl flatpak-deps/
 ```
 
 ## Building a Single Flatpak File
@@ -84,13 +71,29 @@ If you see DNS resolution errors during build, ensure your network is accessible
 
 1. Run the build while connected to a network
 2. Use `--disable-network=false` if supported by your flatpak-builder version
-3. Pre-download dependencies and include them in the build
+3. Install dependencies directly via pip (they will be downloaded during build)
 
 ### Source files not found
 If flatpak-builder cannot find source files:
 
-1. Verify the `path` field points to the correct location
+1. Verify the `path` field in the manifest points to the correct location (should be `..` for parent directory)
 2. Ensure the path is accessible from the flatpak-builder context
-3. Use relative paths when possible
+3. Verify the project structure is correct - source files should be at the project root
+4. Check that desktop/metainfo files exist at the project root
+
+### Build failures
+If the build fails with permission or path errors:
+- Ensure you're running from the flatpak/ directory
+- Check that the manifest file exists at flatpak/top.spelunk.kwallpaper.json
+- Verify source files exist at project root (wallpaper_cli.py, wallpaper_gui.py, kwallpaper/)
+
+## Summary
+
+This flatpak configuration references application source files from the project root:
+- Source code: `/project-root/kwallpaper/` (package)
+- Scripts: `/project-root/wallpaper_cli.py`, `/project-root/wallpaper_gui.py`
+- Desktop files: `/project-root/*.desktop` and `/project-root/*.metainfo.xml`
+
+The flatpak-builder uses relative paths to reference these files from the manifest's directory.
 
 

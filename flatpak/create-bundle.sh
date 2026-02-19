@@ -10,10 +10,10 @@ if ! command -v flatpak build-bundle &> /dev/null; then
     exit 1
 fi
 
-if [ ! -f "$SCRIPT_DIR/repo" ] || [ ! -d "$SCRIPT_DIR/repo" ]; then
-    echo "Error: Build repository not found (run build.sh first)"
-    exit 1
-fi
+if [ ! -f "$SCRIPT_DIR/flatpak-repo" ] || [ ! -d "$SCRIPT_DIR/flatpak-repo" ]; then
+     echo "Error: Build repository not found (run build.sh first)"
+     exit 1
+ fi
 
 rm -rf "$BUNDLE_DIR"
 mkdir -p "$BUNDLE_DIR"

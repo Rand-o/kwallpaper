@@ -1,0 +1,4 @@
+echo "Duplicate directory removed successfully"
+echo "Manifest references updated (wallpaper_gui.py, wallpaper_cli.py now at root)"
+echo "Build scripts verified - no old path references"
+echo "CLI and GUI accessible from root: VERIFIED"

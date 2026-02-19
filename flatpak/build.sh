@@ -4,7 +4,6 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST="$SCRIPT_DIR/top.spelunk.kwallpaper.json"
 BUNDLE_NAME="top.spelunk.kwallpaper"
-DEPS_DIR="$SCRIPT_DIR/flatpak-deps"
 
 if ! command -v flatpak-builder &> /dev/null; then
     echo "Error: flatpak-builder not installed"
@@ -13,11 +12,6 @@ fi
 
 if [ ! -f "$MANIFEST" ]; then
     echo "Error: Manifest not found"
-    exit 1
-fi
-
-if [ ! -d "$DEPS_DIR" ]; then
-    echo "Error: flatpak-deps directory not found"
     exit 1
 fi
 

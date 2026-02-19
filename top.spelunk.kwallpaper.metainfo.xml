@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop">
+  <id>top.spelunk.kwallpaper</id>
+  <name>kwallpaper</name>
+  <summary>KDE Wallpaper Changer</summary>
+  <description>
+    <p>A KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories.</p>
+  </description>
+  <launchable type="desktop-id">top.spelunk.kwallpaper.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://example.com/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://example.com/kwallpaper</url>
+  <developer id="top.spelunk">
+    <name>Spelunk Development</name>
+  </developer>
+  <provides>
+    <binary>wallpaper-gui</binary>
+  </provides>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+</component>

@@ -2,7 +2,7 @@
 Name=kWallpaper
 Comment=Automatically change KDE Plasma wallpapers based on time-of-day
 Exec=wallpaper-gui
-Icon=preferences-desktop-wallpaper
+Icon=top.spelunk.kwallpaper
 Type=Application
 Categories=Utility;DesktopSettings;KDE;
 Keywords=kde;plasma;wallpaper;changer;time-of-day;
