@@ -29,7 +29,7 @@ A beautiful, native KDE Plasma 6 application for automatically changing wallpape
 
 ## Requirements
 
-- **Python 3.10+**
+- **Python 3.10+** (Python 3.13 recommended for Flatpak builds)
 - **KDE Plasma 6** (any recent version)
 - **Linux distribution with KDE Plasma** (Fedora, Ubuntu, Arch, etc.)
 
