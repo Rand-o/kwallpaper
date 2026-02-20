@@ -2,9 +2,9 @@
 
 ⚠️ **KDE Linux Only** - This application requires KDE Plasma 6 and will not work on other desktop environments or operating systems. However, you can modify the code to use a different UI toolkit (e.g., GTK for GNOME) by replacing the PyQt6 components with your preferred GUI framework.
 
-A beautiful, native styled KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
+A beautiful, native styled KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
 
-This project was vibe coded with Qwen3-Coder-Next and in some part GLM-4.7-Flash. The GUI was created with Claude Opus 4.6. I used to use a program on Mac OS called 24hr Wallpaper and I really missed having it when I moved to KDE (Linux). This program works in conjunction with themes you can get at https://www.jetsoncreative.com/24hourwindows and will change the wallpaper using those themes based on what time of day it is at the location you configure.
+This project was vibe coded with Qwen3-Coder-Next and in some part GLM-4.7-Flash. The GUI was created in one prompt with Claude Opus 4.6. I used to use a program on Mac OS called 24hr Wallpaper and I really missed having it when I moved to KDE (Linux), so I made my own. It works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwindows) and automatically changes your wallpaper based on the time of day and your configured location. You can also create your own themes following Jetson Creative's format.
 
 ![Theme Selector](screenshots/1themes.png)
 *Theme selector tab showing imported themes with cross-fade preview*
