@@ -1,6 +1,6 @@
 # KDE Wallpaper Changer
 
-⚠️ **KDE Linux Only** - This application requires KDE Plasma 6 and will not work on other desktop environments or operating systems.
+⚠️ **KDE Linux Only** - This application requires KDE Plasma 6 and will not work on other desktop environments or operating systems. However, you can modify the code to use a different UI toolkit (e.g., GTK for GNOME) by replacing the PyQt6 components with your preferred GUI framework.
 
 A beautiful, native styled KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (KDE wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
 
