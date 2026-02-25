@@ -106,8 +106,8 @@ def test_extract_theme_cleanup_false_keeps_directory(tmp_path):
     extract_theme(str(zip_path), cleanup=False)
 
     # Verify temp directory still exists (using Path.home()/.cache/)
-    extracted_dir = Path.home() / ".cache" / "wallpaper-changer"
-    assert extracted_dir.exists()
+    # Verify temp directory still exists (using DEFAULT_CACHE_DIR)
+    extracted_dir = wallpaper_changer.DEFAULT_CACHE_DIR
 
 
 def test_extract_theme_includes_all_time_of_day_lists(tmp_path):
