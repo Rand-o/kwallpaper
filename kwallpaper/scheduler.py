@@ -183,19 +183,7 @@ class SchedulerManager:
             logger.info(f"Removed job: {name}")
             return True
         except Exception as e:
-            logger.error(f"Failed to remove job {name}: {e}", exc_info=True)
             return False
-    
-        if self._log_callback:
-            self._log_callback("[INFO] Log cleanup completed - old entries cleared")
-    
-        if self._log_callback:
-            self._log_callback("[INFO] Log cleared")
-
-        """Clear all logged messages."""
-        self._log_start_time = datetime.now()
-        if self._log_callback:
-            self._log_callback("[INFO] Log cleared")
     
     def get_status(self) -> dict:
         status = {'running': self._is_running, 'tasks': self._tasks.copy()}
