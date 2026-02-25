@@ -327,7 +327,8 @@ DEFAULT_CONFIG = {
     "retry_delay": 5,
     "scheduling": {
         "interval": 60,
-        "daily_shuffle_enabled": True
+        "daily_shuffle_enabled": True,
+        "auto_start_on_launch": False
     }
 }
 
@@ -421,7 +422,9 @@ def validate_config(config: Dict[str, Any]) -> None:
         if 'daily_shuffle_enabled' in scheduling:
             if not isinstance(scheduling['daily_shuffle_enabled'], bool):
                 raise ValueError("Config validation failed: 'scheduling.daily_shuffle_enabled' must be a boolean")
-
+        if 'auto_start_on_launch' in scheduling:
+            if not isinstance(scheduling['auto_start_on_launch'], bool):
+                raise ValueError("Config validation failed: 'scheduling.auto_start_on_launch' must be a boolean")
 
 # ============================================================================
 # THEME EXTRACTION
