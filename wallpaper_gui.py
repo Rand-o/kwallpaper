@@ -679,6 +679,7 @@ class SettingsPage(QWidget):
 
         # ── Scheduler ──
         sg = QGroupBox("Scheduler")
+        col.addWidget(sg)
         sf = QFormLayout(sg)
         self.interval = QSpinBox()
         self.interval.setRange(1, 3600)
