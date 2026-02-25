@@ -689,21 +689,33 @@ class SettingsPage(QWidget):
         sf.addRow(self.run_cycle)
         self.daily_shuffle = QCheckBox("Enable daily theme shuffle")
         sf.addRow(self.daily_shuffle)
-        col.addWidget(sg)
+        self.auto_start_scheduler = QCheckBox("Start scheduler on app launch")
+        sf.addRow(self.auto_start_scheduler)
 
         # ── Location ──
         lg = QGroupBox("Location")
         lf = QFormLayout(lg)
         self.timezone = QLineEdit()
         lf.addRow("Timezone:", self.timezone)
+        
+        # Lat/lon row with auto-detect button
+        lat_lon_row = QHBoxLayout()
         self.lat = QDoubleSpinBox()
         self.lat.setRange(-90.0, 90.0)
         self.lat.setDecimals(4)
-        lf.addRow("Latitude:", self.lat)
+        lat_lon_row.addWidget(self.lat)
+        lat_lon_row.addWidget(QLabel("Latitude"))
         self.lon = QDoubleSpinBox()
         self.lon.setRange(-180.0, 180.0)
         self.lon.setDecimals(4)
-        lf.addRow("Longitude:", self.lon)
+        lat_lon_row.addWidget(self.lon)
+        lat_lon_row.addWidget(QLabel("Longitude"))
+        self.auto_detect_btn = QPushButton(
+            QIcon.fromTheme("view-refresh"), "Auto-detect")
+        self.auto_detect_btn.setToolTip("Detect current location from KDE system settings")
+        self.auto_detect_btn.clicked.connect(self._on_auto_detect_location)
+        lat_lon_row.addWidget(self.auto_detect_btn)
+        lf.addRow(lat_lon_row)
         col.addWidget(lg)
 
         # ── Appearance ──
@@ -745,6 +757,8 @@ class SettingsPage(QWidget):
             self.run_cycle.setChecked(s.get("run_cycle", True))
             self.daily_shuffle.setChecked(
                 s.get("daily_shuffle_enabled", True))
+            self.auto_start_scheduler.setChecked(
+                s.get("auto_start_on_launch", False))
             self.timezone.setText(loc.get("timezone", "America/Phoenix"))
             self.lat.setValue(loc.get("latitude",  33.4484))
             self.lon.setValue(loc.get("longitude", -112.074))
@@ -765,6 +779,7 @@ class SettingsPage(QWidget):
                 "interval":              self.interval.value(),
                 "run_cycle":             self.run_cycle.isChecked(),
                 "daily_shuffle_enabled": self.daily_shuffle.isChecked(),
+                "auto_start_on_launch":  self.auto_start_scheduler.isChecked(),
             }
             c["location"] = {
                 "timezone":  self.timezone.text(),
@@ -823,6 +838,87 @@ class SettingsPage(QWidget):
             if autostart_file.exists():
                 autostart_file.unlink()
                 logger.info("Autostart disabled")
+
+    def _on_auto_detect_location(self):
+        """Auto-detect location from KDE system settings."""
+        try:
+            lat, lon, tz = self._get_system_location()
+            self.lat.setValue(lat)
+            self.lon.setValue(lon)
+            self.timezone.setText(tz)
+            w = self.window()
+            if isinstance(w, QMainWindow):
+                w.statusBar().showMessage(
+                    f"Location detected: {lat:.4f}, {lon:.4f} ({tz})", 4000)
+            logger.info(
+                f"Auto-detected location: {lat:.4f}, {lon:.4f} ({tz})")
+        except Exception as e:
+            logger.warning(f"Auto-detect failed: {e}")
+            QMessageBox.warning(
+                self, "Auto-detect Failed",
+                f"Could not detect location from KDE system settings:\n{e}")
+
+    def _get_system_location(self):
+        """
+        Get current location from KDE system settings.
+        Returns (latitude, longitude, timezone) tuple.
+        Fallback: returns default Phoenix coordinates if not available.
+        """
+        # Try to read from KDE system config (localstorage.kcfg)
+        # This is where Plasma stores location settings
+        import subprocess
+        import configparser
+        
+        # Check if plasma-apply-wallpaperimage is available (KDE indicator)
+        try:
+            result = subprocess.run(
+                ["kreadconfig5", "--file", "plasma-org.kde.plasma.desktop-appletsrc",
+                 "--group", "DataEngines", "--key", "geoclue2Enabled"],
+                capture_output=True, text=True, timeout=5
+            )
+            geoclue_enabled = result.stdout.strip() == "true"
+        except Exception:
+            geoclue_enabled = False
+        
+        if not geoclue_enabled:
+            # Fallback to default Phoenix coordinates
+            return (33.4484, -112.074, "America/Phoenix")
+        
+        # Try to get location from Geoclue2 D-Bus
+        try:
+            import dbus
+            bus = dbus.SessionBus()
+            geoclue = bus.get_object(
+                "org.freedesktop.Geoclue2",
+                "/org/freedesktop/Geoclue2/Agents/org.kde.plasma.workspace"
+            )
+            current = geoclue.Get("org.freedesktop.Geoclue2.Agent", "Current",
+                                   dbus_interface="org.freedesktop.DBus.Properties")
+            # Current returns Dict{string,Variant}
+            if isinstance(current, dict):
+                lat = current.get("latitude", 33.4484)
+                lon = current.get("longitude", -112.074)
+                tz = current.get("timezone", "America/Phoenix")
+                return (float(lat), float(lon), str(tz))
+        except Exception:
+            pass
+        
+        # If D-Bus fails, try to read from system config
+        try:
+            # KDE stores location in plasma-org.kde.plasma.desktop-appletsrc
+            config = configparser.ConfigParser()
+            config.read("~/.config/plasma-org.kde.plasma.desktop-appletsrc")
+            if "DataEngines" in config and "geoclue2" in config["DataEngines"]:
+                geoclue_cfg = config["DataEngines"]["geoclue2"]
+                lat = float(geoclue_cfg.get("latitude", 33.4484))
+                lon = float(geoclue_cfg.get("longitude", -112.074))
+                tz = geoclue_cfg.get("timezone", "America/Phoenix")
+                return (lat, lon, tz)
+        except Exception:
+            pass
+        
+        # Ultimate fallback: Phoenix coordinates
+        return (33.4484, -112.074, "America/Phoenix")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -964,6 +1060,7 @@ class WallpaperChangerWindow(QMainWindow):
         self._start_ipc()
         self._restore_state()
         self._apply_saved_scheme()
+        self._maybe_start_scheduler()
 
     # ── UI construction -------------------------------------------------------
 
@@ -1183,6 +1280,20 @@ class WallpaperChangerWindow(QMainWindow):
     def _cleanup(self):
         if self.sched.is_running():
             self.sched.scheduler.stop(wait=True)
+
+    def _maybe_start_scheduler(self):
+        """Auto-start scheduler if enabled in config."""
+        try:
+            config = load_config(self._cfg)
+            auto_start = config.get('scheduling', {}).get(
+                'auto_start_on_launch', False)
+            run_cycle = config.get('scheduling', {}).get('run_cycle', True)
+            if auto_start and run_cycle:
+                logger.info("Auto-starting scheduler on launch")
+                # Small delay to ensure UI is fully loaded
+                QTimer.singleShot(1000, self.sched.start)
+        except Exception as e:
+            logger.warning(f"Auto-start check failed: {e}")
 
     def windowEvent(self, event):
         """Handle window state changes to stop preview when minimized."""
