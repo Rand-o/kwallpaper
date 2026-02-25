@@ -379,6 +379,18 @@ class ThemesPage(QWidget):
         self.apply_btn.setEnabled(False)
         self.apply_btn.clicked.connect(self._apply)
         brow.addWidget(self.apply_btn)
+
+        self.delete_btn = QPushButton(
+            QIcon.fromTheme("user-trash"), "Delete")
+        self.delete_btn.setToolTip("Delete the selected theme")
+        self.delete_btn.clicked.connect(self._delete_theme)
+        brow.addWidget(self.delete_btn)
+
+        self.delete_warning = QLabel(
+            "Scheduler must be stopped to delete themes")
+        self.delete_warning.setStyleSheet("color: red; font-weight: bold;")
+        self.delete_warning.setVisible(False)
+        brow.addWidget(self.delete_warning)
         lv.addLayout(brow)
 
         split.addWidget(left)
@@ -462,6 +474,37 @@ class ThemesPage(QWidget):
         if failed > 0:
             QMessageBox.warning(self, "Import Failed", f"Failed to import {failed} file(s)")
 
+    def _delete_theme(self):
+        cur = self.theme_list.currentItem()
+        if not cur:
+            return
+
+        name = cur.text()
+        theme_path = cur.data(Qt.ItemDataRole.UserRole)
+
+        # Confirm deletion
+        reply = QMessageBox.question(
+            self,
+            "Delete Theme",
+            f"Delete theme '{name}'? This cannot be undone.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        # Delete theme folder from disk
+        try:
+            import shutil
+            if Path(theme_path).exists():
+                shutil.rmtree(theme_path)
+                self.load_themes()
+                self._status(f"Theme '{name}' deleted successfully")
+            else:
+                QMessageBox.warning(self, "Delete Failed", f"Theme folder not found: {theme_path}")
+        except Exception as e:
+            logger.error(f"Delete failed for {theme_path}: {e}")
+            QMessageBox.warning(self, "Delete Failed", str(e))
     def _apply(self):
         cur = self.theme_list.currentItem()
         if not cur:
@@ -534,11 +577,19 @@ class ThemesPage(QWidget):
             QMessageBox.warning(self, "Apply Failed", str(e))
 
     # ── helpers ---------------------------------------------------------------
+    def _update_delete_button_state(self, running: bool):
+        """Update delete button state based on scheduler running status."""
+        if running:
+            self.delete_btn.setEnabled(False)
+            self.delete_warning.setVisible(True)
+        else:
+            self.delete_btn.setEnabled(True)
+            self.delete_warning.setVisible(False)
+
     def _status(self, msg: str, ms: int = 5000):
         w = self.window()
         if isinstance(w, QMainWindow):
             w.statusBar().showMessage(msg, ms)
-
     def _discover_images(self, theme_path: str) -> list[str]:
         """Discover all image files in theme directory in one glob call."""
         images = []
@@ -981,6 +1032,7 @@ class WallpaperChangerWindow(QMainWindow):
 
         self.tabs.currentChanged.connect(self._on_tab)
         self.sched.state_changed.connect(self._on_sched_state)
+        self.sched.state_changed.connect(self.themes._update_delete_button_state)
 
         # Initial data load
         self.themes.load_themes()
