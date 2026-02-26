@@ -171,17 +171,22 @@ def apply_color_scheme(name: str):
 def get_icon_for_theme(theme_mode: str) -> QIcon:
     """Get appropriate icon based on theme mode: "system", "light", or "dark"."""
     icons_dir = Path(__file__).parent / "icons"
-    if theme_mode == "dark":
-        icon_path = icons_dir / "kWallpaper-dark.png"
-    else:
-        icon_path = icons_dir / "kWallpaper-light.png"
+    
+    # Map theme modes to icon filenames
+    icon_map = {
+        "light": "kWallpaper-light.png",
+        "dark": "kWallpaper-dark.png",
+        "system": "kWallpaper-light.png",  # Default to light for system mode
+    }
+    
+    icon_filename = icon_map.get(theme_mode, "kwallpaper.png")
+    icon_path = icons_dir / icon_filename
     
     if icon_path.exists():
         return QIcon(str(icon_path))
     else:
         # Fallback to theme icon
         return QIcon.fromTheme("preferences-desktop-wallpaper", QIcon.fromTheme("image-x-generic"))
-
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Widgets
@@ -373,7 +378,9 @@ class ThemesPage(QWidget):
         root.addWidget(split)
 
         # Left: theme list + buttons
+        # Left: theme list + buttons
         left = QWidget()
+        left.setMinimumWidth(200)  # Smaller initial width for themes list
         lv = QVBoxLayout(left)
         lv.setContentsMargins(0, 0, 0, 0)
         lv.setSpacing(6)
@@ -404,13 +411,21 @@ class ThemesPage(QWidget):
         self.delete_btn.setToolTip("Delete the selected theme")
         self.delete_btn.clicked.connect(self._delete_theme)
         brow.addWidget(self.delete_btn)
-
+        # Make buttons smaller
+        btn_size = 75
+        self.import_btn.setMaximumWidth(btn_size)
+        self.apply_btn.setMaximumWidth(btn_size)
+        self.delete_btn.setMaximumWidth(btn_size)
+        # Delete warning goes under buttons (separate row)
         self.delete_warning = QLabel(
             "Scheduler must be stopped to delete themes")
-        self.delete_warning.setStyleSheet("color: red; font-weight: bold;")
+        self.delete_warning.setStyleSheet("color: red;")
         self.delete_warning.setVisible(False)
-        brow.addWidget(self.delete_warning)
         lv.addLayout(brow)
+
+        lv.addWidget(self.delete_warning)
+
+
 
         split.addWidget(left)
 
@@ -423,16 +438,14 @@ class ThemesPage(QWidget):
         self.preview = ImageCrossFadeWidget()
         rv.addWidget(self.preview, 1)
 
-        self.info = QLabel()
-        self.info.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        rv.addWidget(self.info)
+        # Image count info goes after preview on the right side
+        self.preview_info = QLabel()
+        self.preview_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        rv.addWidget(self.preview_info)
 
         split.addWidget(right)
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 3)
-        split.setSizes([280, 700])
-
-    # ── public ----------------------------------------------------------------
+        # Set initial splitter sizes: left=150, right=850 (total 1000)
+        split.setSizes([150, 850])
     def load_themes(self):
         self.theme_list.clear()
         try:
@@ -463,14 +476,16 @@ class ThemesPage(QWidget):
         if cur is None:
             self.apply_btn.setEnabled(False)
             self.preview.set_images([])
-            self.info.clear()
+            self.preview_info.clear()
             return
         self.apply_btn.setEnabled(True)
         imgs = self._images_for(cur.data(Qt.ItemDataRole.UserRole))
         self.preview.set_images(imgs)
         self.preview.start()
-        self.info.setText(f"{len(imgs)} images")
-
+        if imgs:
+            self.preview_info.setText(f"{len(imgs)} images")
+        else:
+            self.preview_info.clear()
     def _import(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Import Theme", "",
@@ -971,7 +986,7 @@ class SchedulerPage(QWidget):
         self.status_lbl = QLabel("Stopped")
         f = self.status_lbl.font()
         f.setPointSize(f.pointSize() + 2)
-        f.setBold(True)
+        # Status text should not be bold
         self.status_lbl.setFont(f)
         self.status_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         sv.addWidget(self.status_lbl)
