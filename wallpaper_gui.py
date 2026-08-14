@@ -629,6 +629,10 @@ class ThemesPage(QWidget):
             self._status(message)
             if not success:
                 QMessageBox.warning(self, "Apply Failed", message)
+            else:
+                # Confirm success to the user (wallpaper may not change
+                # visibly if the same image was already set)
+                QMessageBox.information(self, "Wallpaper Applied", message)
         elif op == "delete":
             self._set_busy(self.delete_btn, False)
             self.load_themes()
