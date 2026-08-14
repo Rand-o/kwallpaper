@@ -227,6 +227,31 @@ class _LoadSignals(QObject):
 
     pixmap_loaded = pyqtSignal(str, QPixmap)
     thumb_ready = pyqtSignal(str, str)  # (source path, thumbnail path)
+    op_finished = pyqtSignal(str, bool, str)  # (op name, success, message)
+
+
+class _OpWorker(QRunnable):
+    """Runs a blocking core operation off the GUI thread.
+
+    The callable must return (success: bool, message: str).
+    """
+
+    def __init__(self, op: str, fn, sig: QObject):
+        super().__init__()
+        self.setAutoDelete(True)
+        self._op = op
+        self._fn = fn
+        self._sig = sig
+
+    def run(self):
+        try:
+            success, message = self._fn()
+        except Exception as e:
+            import traceback
+            logger.error(f"{self._op} failed: {e}")
+            logger.error(traceback.format_exc())
+            success, message = False, str(e)
+        self._sig.op_finished.emit(self._op, success, message)
 
 
 class ImageCrossFadeWidget(QWidget):
@@ -436,6 +461,10 @@ class ThemesPage(QWidget):
         ensure_config_dirs()
         # Cache for image paths per theme (path -> list[str])
         self._image_cache: dict[str, list[str]] = {}
+        # Shared worker pool + signals for background Apply/Import/Delete
+        self._pool = QThreadPool(self)
+        self._signals = _LoadSignals(self)
+        self._signals.op_finished.connect(self._on_op_finished)
         self._build()
 
     # ── construction ----------------------------------------------------------
@@ -562,21 +591,59 @@ class ThemesPage(QWidget):
             "Theme Files (*.ddw *.zip);;All Files (*)")
         if not paths:
             return
+        self._set_busy(self.import_btn, True)
+        self._pool.start(_OpWorker(
+            "import", lambda: self._import_worker(paths), self._signals))
+
+    def _import_worker(self, paths: list[str]):
+        """Blocking import of one or more theme archives (worker thread)."""
+        from kwallpaper.core import import_theme
         imported = 0
         failed = 0
+        errors = []
         for path in paths:
             try:
-                extract_theme(path, cleanup=False)
+                import_theme(path)
                 imported += 1
             except Exception as e:
                 logger.error(f"Import failed for {path}: {e}")
                 failed += 1
-        
-        self.load_themes()
-        if imported > 0:
-            self._status(f"{imported} theme(s) imported successfully")
-        if failed > 0:
-            QMessageBox.warning(self, "Import Failed", f"Failed to import {failed} file(s)")
+                errors.append(f"{Path(path).name}: {e}")
+        msg = f"{imported} theme(s) imported successfully"
+        if failed:
+            msg += f"; {failed} failed"
+            errors.append("See log for details")
+        detail = "\n".join(errors) if failed else ""
+        return (failed == 0, msg, detail)
+
+    def _on_op_finished(self, op: str, success: bool, message: str):
+        """Slot: a background Apply/Import/Delete operation completed."""
+        if op == "import":
+            self._set_busy(self.import_btn, False)
+            self.load_themes()
+            self._status(message)
+            if not success:
+                QMessageBox.warning(self, "Import Failed", message)
+        elif op == "apply":
+            self._set_busy(self.apply_btn, False)
+            self._status(message)
+            if not success:
+                QMessageBox.warning(self, "Apply Failed", message)
+        elif op == "delete":
+            self._set_busy(self.delete_btn, False)
+            self.load_themes()
+            self._status(message)
+            if not success:
+                QMessageBox.warning(self, "Delete Failed", message)
+
+    def _set_busy(self, btn: QPushButton, busy: bool):
+        btn.setEnabled(not busy)
+        if busy:
+            btn.setText("Working…")
+        else:
+            btn.setText("Apply" if btn is self.apply_btn
+                        else "Import…" if btn is self.import_btn
+                        else "Delete")
 
     def _delete_theme(self):
         cur = self.theme_list.currentItem()
@@ -597,18 +664,22 @@ class ThemesPage(QWidget):
         if reply == QMessageBox.StandardButton.No:
             return
 
-        # Delete theme folder from disk
+        # Delete theme folder from disk in a background worker
+        self._set_busy(self.delete_btn, True)
+        self._pool.start(_OpWorker(
+            "delete",
+            lambda: self._delete_worker(theme_path, name),
+            self._signals))
+
+    def _delete_worker(self, theme_path: str, name: str):
+        """Blocking theme deletion (worker thread)."""
+        from kwallpaper.core import delete_theme
         try:
-            import shutil
-            if Path(theme_path).exists():
-                shutil.rmtree(theme_path)
-                self.load_themes()
-                self._status(f"Theme '{name}' deleted successfully")
-            else:
-                QMessageBox.warning(self, "Delete Failed", f"Theme folder not found: {theme_path}")
+            delete_theme(theme_path)
         except Exception as e:
             logger.error(f"Delete failed for {theme_path}: {e}")
-            QMessageBox.warning(self, "Delete Failed", str(e))
+            return (False, f"Delete failed: {e}", "")
+        return (True, f"Theme '{name}' deleted successfully", "")
     def _apply(self):
         cur = self.theme_list.currentItem()
         if not cur:
@@ -633,44 +704,22 @@ class ThemesPage(QWidget):
             if reply == QMessageBox.StandardButton.No:
                 return  # Cancel the apply operation
         
-        try:
-            from kwallpaper.wallpaper_changer import run_change_command, save_config
-            from kwallpaper.shuffle_list_manager import save_shuffle_list, get_current_date, create_initial_shuffle
-            from types import SimpleNamespace
-            
-            logger.info(f"Applying theme: {name}, folder_path: {folder_path}, folder: {folder}")
-            
-            # Run the change command
-            rc = run_change_command(SimpleNamespace(
-                theme_path=folder_path, config=self._cfg,
-                monitor=False, time=None))
-            
-            # Save the applied theme to config so it persists for scheduler
-            config['theme']['last_applied'] = folder
-            save_config(self._cfg, config)
-            
-            # Reset shuffle list state if shuffle is enabled
-            if shuffle_enabled:
-                themes = [str(p) for _, p in discover_themes()]
-                if folder_path in themes:
-                    # Create a new shuffled list with current theme at index 0,
-                    # then shuffled list of remaining themes
-                    other_themes = [t for t in themes if t != folder_path]
-                    import random
-                    shuffled = [folder_path] + random.sample(other_themes, len(other_themes))
-                    idx = 0  # Current theme is always at index 0
-                    save_shuffle_list(shuffled, idx, get_current_date())
-                else:
-                    logger.warning(f"Folder path not in themes list: {folder_path}")
-            
-            self._status(
-                f"Applied: {name}" if rc == 0
-                else f"Failed to apply: {name}")
-        except Exception as e:
-            import traceback
-            logger.error(f"Apply failed: {e}")
-            logger.error(traceback.format_exc())
-            QMessageBox.warning(self, "Apply Failed", str(e))
+        logger.info(f"Applying theme: {name}, folder_path: {folder_path}, folder: {folder}")
+        # Run the whole apply (astral math, D-Bus, config + shuffle writes)
+        # in a background worker so the GUI never freezes.
+        self._set_busy(self.apply_btn, True)
+        self._pool.start(_OpWorker(
+            "apply",
+            lambda: self._apply_worker(folder_path),
+            self._signals))
+
+    def _apply_worker(self, folder_path: str):
+        """Blocking theme apply (worker thread)."""
+        from kwallpaper.core import apply_theme
+        result = apply_theme(folder_path, self._cfg)
+        if result.success:
+            return (True, f"Applied: {result.theme_name}", "")
+        return (False, f"Failed to apply: {result.message}", "")
 
     # ── helpers ---------------------------------------------------------------
     def _update_delete_button_state(self, running: bool):
