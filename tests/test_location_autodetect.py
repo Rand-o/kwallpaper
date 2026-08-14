@@ -131,47 +131,50 @@ class TestGetSystemLocation:
         assert lon == -112.074
         assert tz == "America/Phoenix"
     
-    @pytest.mark.xfail(reason="Complex mocking for config file parsing is fragile")
     def test_read_from_config_file(self, app, temp_config):
-        """Test reading location from KDE config file."""
+        """Test reading location from KDE config file when D-Bus fails."""
         page = SettingsPage(temp_config)
-        
-        # Create a mock config file
-        mock_config_content = """
-[DataEngines]
-[DataEngines/geoclue2]
-latitude=37.7749
-longitude=-122.4194
-timezone=America/Los_Angeles
-"""
-        mock_config_path = "/tmp/mock_plasma_config"
-        
+
+        # Simulate the INI structure: [DataEngines/geoclue2] with lat/lon/tz keys.
+        # ConfigParser converts / section names to nested dict access.
+        geoclue2_data = {
+            "latitude": "37.7749",
+            "longitude": "-122.4194",
+            "timezone": "America/Los_Angeles",
+        }
+
+        class SectionProxy(dict):
+            """Dict subclass that mimics ConfigParser's SectionProxy behavior."""
+            pass
+
+        # Build the nested structure: config["DataEngines"]["geoclue2"]
+        data_engines = {"geoclue2": geoclue2_data}
+        mock_parser = Mock()
+        mock_parser.__bool__ = lambda self: True
+        mock_parser.__contains__ = lambda self, x: x == "DataEngines"
+        mock_parser.__getitem__ = lambda self, key: data_engines if key == "DataEngines" else {}
+        mock_parser.read = Mock()
+
         def mock_run(*args, **kwargs):
             if 'kreadconfig5' in str(args):
-                mock_result = Mock()
-                mock_result.stdout.strip.return_value = "false"
-                return mock_result
+                result = Mock()
+                # geoclue2 is enabled → code proceeds past the early return
+                result.stdout.strip.return_value = "true"
+                return result
             raise Exception("Failed")
-        
+
         with patch('subprocess.run', side_effect=mock_run):
-            with patch('builtins.open', Mock(return_value=Mock(__enter__=lambda s: s, __exit__=lambda s, *a: True))):
-                # Mock the file content reading
+            # Patch get_object to fail → code falls through to configparser path
+            with patch('dbus.SessionBus') as MockSessionBus:
+                mock_bus = Mock()
+                mock_bus.get_object.side_effect = Exception("No dbus")
+                MockSessionBus.return_value = mock_bus
+
                 with patch('configparser.ConfigParser') as MockConfigParser:
-                    mock_parser = Mock()
-                    mock_parser.__bool__ = lambda self: True
-                    mock_parser.__contains__ = lambda self, x: "DataEngines" in x
-                    mock_parser.get = lambda section, key, default=None: {
-                        "DataEngines/geoclue2": {
-                            "latitude": "37.7749",
-                            "longitude": "-122.4194",
-                            "timezone": "America/Los_Angeles"
-                        }
-                    }.get(section, {}).get(key, default)
-                    mock_parser.sections = lambda: ["DataEngines/geoclue2"]
                     MockConfigParser.return_value = mock_parser
-                    
+
                     lat, lon, tz = page._get_system_location()
-        
+
         assert lat == 37.7749
         assert lon == -122.4194
         assert tz == "America/Los_Angeles"

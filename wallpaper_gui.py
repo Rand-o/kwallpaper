@@ -31,11 +31,11 @@ try:
     )
     from PyQt6.QtCore import (
         Qt, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve,
-        pyqtProperty, QSettings,
+        pyqtProperty, QSettings, QEvent, QThreadPool, QRunnable,
+        QObject,
     )
     from PyQt6.QtGui import (
         QPixmap, QColor, QPainter, QPen, QIcon, QPalette, QFontDatabase,
-        QImageReader,
     )
     PYQT6_AVAILABLE = True
 except ImportError:
@@ -192,15 +192,67 @@ def get_icon_for_theme(theme_mode: str) -> QIcon:
 #  Widgets
 # ═════════════════════════════════════════════════════════════════════════════
 
+class _PixmapLoader(QRunnable):
+    """Loads a QPixmap off the GUI thread and emits it when ready."""
+
+    def __init__(self, path: str, sig: QObject):
+        super().__init__()
+        self.setAutoDelete(True)
+        self._path = path
+        self._sig = sig
+
+    def run(self):
+        pm = QPixmap(self._path)
+        if pm.isNull():
+            pm = QPixmap()
+        self._sig.pixmap_loaded.emit(self._path, pm)
+
+
+class _ThumbnailWorker(QRunnable):
+    """Generates a small JPEG thumbnail off the GUI thread."""
+
+    def __init__(self, path: str, sig: QObject):
+        super().__init__()
+        self.setAutoDelete(True)
+        self._path = path
+        self._sig = sig
+
+    def run(self):
+        from kwallpaper.wallpaper_changer import ensure_thumbnail
+        self._sig.thumb_ready.emit(self._path, ensure_thumbnail(self._path))
+
+
+class _LoadSignals(QObject):
+    """Signal emitter shared by background workers (lives on the GUI thread)."""
+
+    pixmap_loaded = pyqtSignal(str, QPixmap)
+    thumb_ready = pyqtSignal(str, str)  # (source path, thumbnail path)
+
+
 class ImageCrossFadeWidget(QWidget):
-    """Custom-painted widget that smoothly cross-fades between images."""
+    """Cross-fade preview widget.
+
+    All image decoding and scaling happens in background worker threads.
+    The widget only ever renders ~512px thumbnails (never full-res files),
+    pre-scaled once to widget size, and paintEvent is pure drawPixmap.
+    """
+
+    _MAX_CACHE = 32   # LRU cap for raw (thumbnail) pixmaps
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._images: list[str] = []
         self._blend: float = 0.0
         self._idx: int = 0
-        self._cache: dict[int, QPixmap] = {}
+        self._thumb_paths: dict[int, str] = {}   # image idx -> thumb path
+        self._raw_cache: dict[str, QPixmap] = {} # thumb path -> pixmap (LRU)
+        self._scaled: dict[int, QPixmap] = {}    # image idx -> scaled pixmap
+        self._loading: set[str] = set()          # thumb paths in flight
+
+        self._pool = QThreadPool(self)
+        self._signals = _LoadSignals(self)
+        self._signals.pixmap_loaded.connect(self._on_pixmap_loaded)
+        self._signals.thumb_ready.connect(self._on_thumb_ready)
 
         self.setAutoFillBackground(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding,
@@ -218,11 +270,6 @@ class ImageCrossFadeWidget(QWidget):
         self._timer.setInterval(2700)   # 1.5 s hold + 1.2 s fade = 2.7 s per frame
         self._timer.timeout.connect(self._advance)
 
-        # Lazy load timer for background image loading
-        self._load_timer = QTimer(self)
-        self._load_timer.setSingleShot(True)
-        self._load_timer.timeout.connect(self._load_next_image)
-
     # -- animated property -----------------------------------------------------
     @pyqtProperty(float)
     def blendValue(self) -> float:
@@ -235,20 +282,21 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- public API ------------------------------------------------------------
     def set_images(self, paths: list[str]):
-        """Load images with lazy loading for instant UI response."""
+        """Switch to a new image list. Cheap: stores the list and kicks off
+        background thumbnail + pixmap loading; the first frame appears as
+        soon as the first background load finishes."""
         self._timer.stop()
         self._anim.stop()
-        self._cache.clear()
-        self._images = paths
+        self._images = list(paths)
         self._idx = 0
         self._blend = 0.0
-        # Only preload first 2 images - lazy load rest
-        for i in range(min(2, len(paths))):
-            self._ensure(i)
+        self._thumb_paths = {}
+        self._scaled = {}
+        self._loading = set()
+        for i, p in enumerate(self._images):
+            self._request(i)
         self.update()
-        # Schedule background loading of remaining images
-        if len(paths) > 2:
-            self._schedule_lazy_load()
+
     def start(self):
         if len(self._images) > 1:
             self._timer.start()
@@ -256,58 +304,79 @@ class ImageCrossFadeWidget(QWidget):
     def stop(self):
         self._timer.stop()
         self._anim.stop()
-        self._load_timer.stop()
+
+    # -- background loading ----------------------------------------------------
+    def _request(self, idx: int):
+        """Kick off the thumbnail + pixmap pipeline for one image."""
+        if not (0 <= idx < len(self._images)):
+            return
+        path = self._images[idx]
+        if idx in self._thumb_paths or idx in self._scaled:
+            return
+        self._pool.start(_ThumbnailWorker(path, self._signals))
+
+    def _on_thumb_ready(self, src: str, thumb: str):
+        idx = self._images.index(src) if src in self._images else None
+        if idx is None:
+            return
+        self._thumb_paths[idx] = thumb
+        if thumb in self._raw_cache:
+            self._on_pixmap_loaded(thumb, self._raw_cache[thumb])
+            return
+        if thumb in self._loading:
+            return
+        self._loading.add(thumb)
+        self._pool.start(_PixmapLoader(thumb, self._signals))
+
+    def _on_pixmap_loaded(self, thumb: str, pm: QPixmap):
+        self._loading.discard(thumb)
+        if pm.isNull():
+            return
+        # LRU insert: move to end, evict oldest beyond the cap
+        self._raw_cache.pop(thumb, None)
+        self._raw_cache[thumb] = pm
+        while len(self._raw_cache) > self._MAX_CACHE:
+            self._raw_cache.pop(next(iter(self._raw_cache)))
+        # Scale once to current widget size for every image using this thumb
+        for idx, t in self._thumb_paths.items():
+            if t == thumb and idx not in self._scaled:
+                self._scaled[idx] = self._scale_to_widget(pm)
+        self.update()
+
+    def _scale_to_widget(self, pm: QPixmap) -> QPixmap:
+        sz = self.size()
+        if sz.width() <= 0 or sz.height() <= 0:
+            return pm
+        return pm.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
+                         Qt.TransformationMode.SmoothTransformation)
 
     # -- internals -------------------------------------------------------------
-    def _ensure(self, idx: int):
-        """Load image into cache if not already present, with LRU eviction."""
-        if idx in self._cache or not (0 <= idx < len(self._images)):
-            return
-        # Use QImageReader for faster format detection and loading
-        reader = QImageReader(self._images[idx])
-        if reader.canRead():
-            pm = QPixmap.fromImage(reader.read())
-            if not pm.isNull():
-                self._cache[idx] = pm
-        # Evict oldest cached image if we have too many
-        if len(self._cache) > 3:
-            oldest = next(iter(self._cache))
-            del self._cache[oldest]
-
     def _advance(self):
         if len(self._images) < 2:
             return
         nxt = (self._idx + 1) % len(self._images)
-        self._ensure(nxt)
+        self._request(nxt)
         self._anim.stop()
         self._anim.setStartValue(0.0)
         self._anim.setEndValue(1.0)
         self._anim.start()
-        # Schedule lazy loading of next images after animation starts
-        self._schedule_lazy_load()
 
     def _on_fade_done(self):
         self._idx = (self._idx + 1) % len(self._images)
         self._blend = 0.0
         self.update()
 
-    def _schedule_lazy_load(self):
-        """Schedule loading of next images after animation completes."""
-        self._load_timer.stop()
-        # Load next 2 images after current animation completes (1.2s)
-        self._load_timer.start(1250)
-
-    def _load_next_image(self):
-        """Load next images in background when idle."""
-        # Load images 2 and 3 (indices 1 and 2 in 0-based)
-        next_indices = [self._idx + 1, self._idx + 2]
-        for idx in next_indices:
-            if 0 <= idx < len(self._images) and idx not in self._cache:
-                self._ensure(idx)
+    def resizeEvent(self, event):
+        # Widget size changed: re-scale cached pixmaps once, not per-paint.
+        self._scaled = {}
+        for idx, t in self._thumb_paths.items():
+            pm = self._raw_cache.get(t)
+            if pm is not None:
+                self._scaled[idx] = self._scale_to_widget(pm)
+        super().resizeEvent(event)
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         pal = self.palette()
         sz = self.size()
 
@@ -325,28 +394,29 @@ class ImageCrossFadeWidget(QWidget):
             painter.end()
             return
 
-        cur = self._cache.get(self._idx)
+        cur = self._scaled.get(self._idx)
         if cur is None:
+            # Fast placeholder until the first background load arrives
+            painter.fillRect(self.rect(),
+                             pal.color(QPalette.ColorRole.AlternateBase))
+            painter.setPen(pal.color(QPalette.ColorRole.PlaceholderText))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter,
+                             "Loading preview…")
             painter.end()
             return
 
-        sc = cur.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation)
-        cx = (sz.width()  - sc.width())  // 2
-        cy = (sz.height() - sc.height()) // 2
+        cx = (sz.width()  - cur.width())  // 2
+        cy = (sz.height() - cur.height()) // 2
         painter.setOpacity(1.0 - self._blend)
-        painter.drawPixmap(cx, cy, sc)
+        painter.drawPixmap(cx, cy, cur)
 
         if self._blend > 0.001:
-            nxt = self._cache.get(
-                (self._idx + 1) % len(self._images))
-            if nxt:
-                sn = nxt.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
-                                Qt.TransformationMode.SmoothTransformation)
-                nx = (sz.width()  - sn.width())  // 2
-                ny = (sz.height() - sn.height()) // 2
+            nxt = self._scaled.get((self._idx + 1) % len(self._images))
+            if nxt is not None:
+                nx = (sz.width()  - nxt.width())  // 2
+                ny = (sz.height() - nxt.height()) // 2
                 painter.setOpacity(self._blend)
-                painter.drawPixmap(nx, ny, sn)
+                painter.drawPixmap(nx, ny, nxt)
 
         painter.end()
 
@@ -574,17 +644,10 @@ class ThemesPage(QWidget):
             rc = run_change_command(SimpleNamespace(
                 theme_path=folder_path, config=self._cfg,
                 monitor=False, time=None))
-            logger.info(f"Apply run_change_command returned: {rc}")
             
             # Save the applied theme to config so it persists for scheduler
             config['theme']['last_applied'] = folder
-            logger.info(f"Saving last_applied: {folder}")
             save_config(self._cfg, config)
-            
-            # Verify it was saved
-            with open(self._cfg) as f:
-                saved = json.load(f)
-            logger.info(f"Config after save: theme.last_applied = {saved.get('theme', {}).get('last_applied')}")
             
             # Reset shuffle list state if shuffle is enabled
             if shuffle_enabled:
@@ -596,7 +659,6 @@ class ThemesPage(QWidget):
                     import random
                     shuffled = [folder_path] + random.sample(other_themes, len(other_themes))
                     idx = 0  # Current theme is always at index 0
-                    logger.info(f"Resetting shuffle list, folder: {folder}, index: {idx}")
                     save_shuffle_list(shuffled, idx, get_current_date())
                 else:
                     logger.warning(f"Folder path not in themes list: {folder_path}")
@@ -1052,8 +1114,8 @@ class SchedulerPage(QWidget):
             self.status_lbl.setPalette(p)
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
-            interval = self.scheduler._tasks.get(
-                "cycle", {}).get("interval", 60)
+            interval = self.scheduler.get_status().get(
+                "tasks", {}).get("cycle", {}).get("interval", 60)
             self._append(f"Started  (cycle every {interval}s)")
             self.state_changed.emit(True)
         else:
@@ -1345,7 +1407,7 @@ class WallpaperChangerWindow(QMainWindow):
 
     def windowEvent(self, event):
         """Handle window state changes to stop preview when minimized."""
-        if event.type() == 22:  # QEvent.WindowStateChange
+        if event.type() == QEvent.Type.WindowStateChange:
             if event.newState() & Qt.WindowState.WindowMinimized:
                 if self.tabs.currentWidget() is self.themes:
                     self.themes.preview.stop()

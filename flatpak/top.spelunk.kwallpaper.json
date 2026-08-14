@@ -69,19 +69,22 @@
     {
       "name": "kwallpaper",
       "buildsystem": "simple",
-"build-commands": [
-          "mkdir -p /app/bin",
-          "cp flatpak/wallpaper-gui /app/bin/",
-          "chmod +x /app/bin/wallpaper-gui",
-          "mkdir -p /app/share/applications",
-          "cp flatpak/top.spelunk.kwallpaper.desktop /app/share/applications/",
-          "mkdir -p /app/share/icons/hicolor/512x512/apps",
-          "cp kwallpaper.svg /app/share/icons/hicolor/512x512/apps/top.spelunk.kwallpaper.svg",
-          "mkdir -p /app/lib/python3/kwallpaper",
-          "cp -r kwallpaper/* /app/lib/python3/kwallpaper/",
-          "cp wallpaper_gui.py /app/lib/python3/",
-          "cp wallpaper_cli.py /app/lib/python3/"
-        ],
+      "build-commands": [
+        "mkdir -p /app/bin",
+        "cp flatpak/wallpaper-gui /app/bin/",
+        "chmod +x /app/bin/wallpaper-gui",
+        "mkdir -p /app/share/applications",
+        "cp flatpak/top.spelunk.kwallpaper.desktop /app/share/applications/",
+        "mkdir -p /app/share/icons/hicolor/512x512/apps",
+        "cp icons/kwallpaper.png /app/share/icons/hicolor/512x512/apps/top.spelunk.kwallpaper.png",
+        "mkdir -p /app/lib/python3/kwallpaper/icons",
+        "cp -r kwallpaper/* /app/lib/python3/kwallpaper/",
+        "cp icons/kWallpaper-light.png /app/lib/python3/kwallpaper/icons/",
+        "cp icons/kWallpaper-dark.png /app/lib/python3/kwallpaper/icons/",
+        "rm -rf /app/lib/python3/kwallpaper/__pycache__",
+        "cp wallpaper_gui.py /app/lib/python3/",
+        "cp wallpaper_cli.py /app/lib/python3/"
+      ],
       "sources": [
         {
           "type": "dir",

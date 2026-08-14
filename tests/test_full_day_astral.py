@@ -23,24 +23,24 @@ from kwallpaper import wallpaper_changer
 class MockSun:
     """Mock sun object for testing specific times.
     
-    Times are stored in UTC since select_image_for_time expects UTC.
-    The astral times represent a winter day in Tahoe (America/Los_Angeles):
-    - Dawn: 07:07 LA = 15:07 UTC
-    - Sunrise: 07:30 LA = 15:30 UTC  
-    - Sunset: 17:00 LA = 01:00 UTC (next day)
-    - Dusk: 17:23 LA = 01:23 UTC (next day)
+    Times stored as LA local datetimes (naive). The astral times represent
+    a winter day in Tahoe (America/Los_Angeles):
+    - Dawn: 07:07 LA
+    - Sunrise: 07:30 LA  
+    - Sunset: 17:00 LA (next day for comparison purposes)
+    - Dusk: 17:23 LA (next day for comparison purposes)
     """
     
     def __init__(self, date, timezone_str="America/Los_Angeles"):
         self._date = date
         self._tz = ZoneInfo(timezone_str)
         
-        # Define astral times for the test date in UTC
-        # For a winter day in Tahoe
-        self._dawn = datetime.combine(date, datetime.strptime("15:07", "%H:%M").time()).replace(tzinfo=timezone.utc)
-        self._sunrise = datetime.combine(date, datetime.strptime("15:30", "%H:%M").time()).replace(tzinfo=timezone.utc)
-        self._sunset = datetime.combine(date + timedelta(days=1), datetime.strptime("01:00", "%H:%M").time()).replace(tzinfo=timezone.utc)
-        self._dusk = datetime.combine(date + timedelta(days=1), datetime.strptime("01:23", "%H:%M").time()).replace(tzinfo=timezone.utc)
+        # Store as LA local naive datetimes for direct time-of-day comparison.
+        # All times on same date — real Astral returns all times for the same day.
+        self._dawn = datetime.combine(date, datetime.strptime("07:07", "%H:%M").time())
+        self._sunrise = datetime.combine(date, datetime.strptime("07:30", "%H:%M").time())
+        self._sunset = datetime.combine(date, datetime.strptime("17:00", "%H:%M").time())
+        self._dusk = datetime.combine(date, datetime.strptime("17:23", "%H:%M").time())
     
     def get_sun_data(self):
         """Return sun data dictionary matching Astral API."""
@@ -59,12 +59,11 @@ def test_every_minute_night_period():
     test_date = datetime.now().date()
     mock_sun = MockSun(test_date)
     
-    # Night: from dusk (01:23 UTC next day) to just before dawn (15:06 UTC)
-    # This covers 03:00 to 06:36 LA time = 11:00 to 15:06 UTC (same day)
+    # Night: from dusk to just before dawn
     current = datetime.combine(test_date, datetime.strptime("00:00", "%H:%M").time()).replace(tzinfo=ZoneInfo("America/Los_Angeles"))
-    end_time = mock_sun._dawn - timedelta(minutes=30)
+    end_time = (mock_sun._dawn - timedelta(minutes=30)).replace(tzinfo=ZoneInfo("America/Los_Angeles"))
     
-    while current.astimezone(timezone.utc) < end_time:
+    while current < end_time:
         time_of_day = wallpaper_changer.detect_time_of_day_sun(
             lat=39.5, lon=-119.8, mock_sun=mock_sun, now=current
         )

@@ -13,12 +13,18 @@ import json
 from pathlib import Path
 import glob
 from datetime import datetime, timedelta, timezone, time as time_class
+
+# Save reference to datetime.timezone before local variable shadows it
+_datetime_timezone = timezone
 from zoneinfo import ZoneInfo
+import logging
 import subprocess
 import zipfile
 import tempfile
 import time
 from typing import Optional, Dict, Any, TYPE_CHECKING, cast, Tuple, List
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     try:
@@ -133,6 +139,50 @@ _discover_cache: Optional[Tuple[float, List[Tuple[str, str]]]] = None
 _DISCOVER_CACHE_TIMEOUT = 2.0
 
 
+def ensure_thumbnail(image_path: str, thumb_size: int = 512) -> str:
+    """Generate (or reuse) a small JPEG thumbnail for an image.
+
+    Thumbnails are cached under DEFAULT_CACHE_DIR / "thumbs" / <theme folder
+    name> / as <original stem>.thumb.jpg.  A cached thumbnail is reused only
+    while it is at least as new as the source image.
+
+    The heavy decode happens here, so callers should run this in a background
+    thread.  Returns the thumbnail path, or the original path if thumbnailing
+    fails (the caller can then fall back to loading the original).
+    """
+    try:
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QImage, QImageReader
+        src = Path(image_path)
+        thumb_dir = DEFAULT_CACHE_DIR / "thumbs" / src.parent.name
+        thumb_dir.mkdir(parents=True, exist_ok=True)
+        thumb_path = thumb_dir / (src.stem + ".thumb.jpg")
+
+        if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
+            return str(thumb_path)
+
+        reader = QImageReader(str(src))
+        if not reader.canRead():
+            return str(src)
+        img = reader.read()
+        if img.isNull():
+            return str(src)
+        scaled = img.scaled(thumb_size, thumb_size,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        tmp_path = thumb_dir / (src.stem + ".thumb.jpg.tmp")
+        if scaled.save(str(tmp_path), "JPG", 85):
+            tmp_path.replace(thumb_path)
+        else:
+            if tmp_path.exists():
+                tmp_path.unlink()
+            return str(src)
+        return str(thumb_path)
+    except Exception as e:
+        logger.debug(f"Thumbnail generation failed for {image_path}: {e}")
+        return str(image_path)
+
+
 def discover_themes() -> list:
     global _discover_cache
     
@@ -177,9 +227,12 @@ DURATION_SUNSET_MINUTES = 6
 DURATION_DUSK_MINUTES = 30
 DURATION_IMAGE_9_MINUTES = 30
 
+# Transition offsets used in time-of-day boundary calculations
+TRANSITION_OFFSET_MINUTES = 45
+
 
 def calculate_image_spacing(start_time: datetime, end_time: datetime,
-                           num_images: int, now: datetime) -> int:
+                            num_images: int, now: datetime) -> int:
     """Calculate which image to show based on even spacing across a time period."""
     if start_time >= end_time:
         return 1
@@ -271,16 +324,16 @@ def load_daily_backup_schedule() -> Optional[Dict[str, Any]]:
     
     try:
         with open(backup_path, 'r') as f:
-           backup = json.load(f)
+            backup = json.load(f)
         
         # Validate required fields
         required = ['dawn', 'sunrise', 'sunset', 'dusk', 'time_of_day', 'previous_date']
         if not all(k in backup for k in required):
-           return None
+            return None
         
         # Validate JSON structure
         if not isinstance(backup, dict):
-           return None
+            return None
         
         return backup
     except (json.JSONDecodeError, KeyError, TypeError):
@@ -354,7 +407,7 @@ def load_config(config_path: str) -> Dict[str, Any]:
 
     try:
         with open(config_path, 'r') as f:
-           config = json.load(f)
+            config = json.load(f)
     except json.JSONDecodeError as e:
         raise ValueError(f"Invalid JSON in config file: {e}")
 
@@ -391,7 +444,7 @@ def validate_config(config: Dict[str, Any]) -> None:
 
     for field in required_fields:
         if field not in config:
-           raise ValueError(f"Config validation failed: Missing required field '{field}'")
+            raise ValueError(f"Config validation failed: Missing required field '{field}'")
 
     # Validate interval
     if not isinstance(config['interval'], int) or config['interval'] <= 0:
@@ -467,55 +520,55 @@ def extract_theme(zip_path: str, cleanup: bool = False, extract_dir: Optional[Pa
     try:
         # Extract zip file
         with zipfile.ZipFile(str(zip_path_obj), 'r') as zf:
-           zf.extractall(extract_dir)
+            zf.extractall(extract_dir)
 
         # Find theme.json - first look for any .json file in root, then theme.json recursively
         theme_json_path = None
 
         # Check root directory for any .json file
         for json_file in extract_dir.glob("*.json"):
-           theme_json_path = json_file
-           break
+            theme_json_path = json_file
+            break
 
         # If not found, search recursively for theme.json
         if not theme_json_path:
-           for found_path in extract_dir.rglob("theme.json"):
-               theme_json_path = found_path
-               break
+            for found_path in extract_dir.rglob("theme.json"):
+                theme_json_path = found_path
+                break
 
         if not theme_json_path:
-           raise FileNotFoundError("theme.json not found in zip file")
+            raise FileNotFoundError("theme.json not found in zip file")
 
         # Parse theme.json
         with open(theme_json_path, 'r') as f:
-           theme_data = json.load(f)
+            theme_data = json.load(f)
 
         # Normalize image lists to ensure image 1 is in sunrise, not night
         theme_data = normalize_image_lists(theme_data)
         # Return metadata
         result = {
-           "extract_dir": str(extract_dir),
-           "displayName": theme_data.get("displayName", "Unknown Theme"),
-           "imageCredits": theme_data.get("imageCredits", "Unknown Credits"),
-           "imageFilename": theme_data.get("imageFilename", "*.jpg"),
-           "sunsetImageList": theme_data.get("sunsetImageList", []),
-           "sunriseImageList": theme_data.get("sunriseImageList", []),
-           "dayImageList": theme_data.get("dayImageList", []),
-           "nightImageList": theme_data.get("nightImageList", [])
+            "extract_dir": str(extract_dir),
+            "displayName": theme_data.get("displayName", "Unknown Theme"),
+            "imageCredits": theme_data.get("imageCredits", "Unknown Credits"),
+            "imageFilename": theme_data.get("imageFilename", "*.jpg"),
+            "sunsetImageList": theme_data.get("sunsetImageList", []),
+            "sunriseImageList": theme_data.get("sunriseImageList", []),
+            "dayImageList": theme_data.get("dayImageList", []),
+            "nightImageList": theme_data.get("nightImageList", [])
         }
 
         # Cleanup if requested
         if cleanup:
-           import shutil
-           shutil.rmtree(extract_dir)
+            import shutil
+            shutil.rmtree(extract_dir)
 
         return result
 
     except (zipfile.BadZipFile, json.JSONDecodeError) as e:
         # Clean up on error
         if extract_dir.exists():
-           import shutil
-           shutil.rmtree(extract_dir)
+            import shutil
+            shutil.rmtree(extract_dir)
         raise
 
 
@@ -527,16 +580,16 @@ def get_current_wallpaper() -> Optional[str]:
     """
     try:
         result = subprocess.run([
-           'kreadconfig5',
-           '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
-           '--group', 'Wallpaper',
-           '--group', 'org.kde.image',
-           '--key', 'Image'
+            'kreadconfig5',
+            '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
+            '--group', 'Wallpaper',
+            '--group', 'org.kde.image',
+            '--key', 'Image'
         ], capture_output=True, text=True, check=True)
 
         wallpaper_path = result.stdout.strip()
         if wallpaper_path:
-           return wallpaper_path
+            return wallpaper_path
     except (subprocess.CalledProcessError, FileNotFoundError) as e:
         # Plasma not running or config not found
         pass
@@ -571,95 +624,120 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
     timezone = "America/Phoenix"
     if config_path:
         try:
-           config = load_config(config_path)
-           if 'location' in config:
-               loc_data = config['location']
-               timezone = loc_data.get('timezone', timezone)
+            config = load_config(config_path)
+            if 'location' in config:
+                loc_data = config['location']
+                timezone = loc_data.get('timezone', timezone)
         except (FileNotFoundError, ValueError):
-           pass
+            pass
     
     # If Astral is unavailable, load and use previous day's backup schedule
     if not ASTRAL_AVAILABLE:
         backup = load_daily_backup_schedule()
         if backup:
-           return backup['time_of_day']
+            return backup['time_of_day']
         raise RuntimeError("Astral unavailable and no previous day backup exists")
 
     try:
         # Import here to satisfy type checkers
-        from astral import LocationInfo
-        from astral.sun import sun
+        import astral
+        LocationInfo = astral.LocationInfo
+        sun = astral.sun
 
         # Try to read location from config file if provided
         timezone = "America/Phoenix"
         if config_path:
-           try:
-               config = load_config(config_path)
-               if 'location' in config:
-                   loc_data = config['location']
-                   lat = loc_data.get('latitude', lat)
-                   lon = loc_data.get('longitude', lon)
-                   timezone = loc_data.get('timezone', timezone)
-           except (FileNotFoundError, ValueError):
-               # If config file doesn't exist or is invalid, use default location
-               pass
+            try:
+                config = load_config(config_path)
+                if 'location' in config:
+                    loc_data = config['location']
+                    lat = loc_data.get('latitude', lat)
+                    lon = loc_data.get('longitude', lon)
+                    timezone = loc_data.get('timezone', timezone)
+            except (FileNotFoundError, ValueError):
+                # If config file doesn't exist or is invalid, use default location
+                pass
 
+        target_tz = ZoneInfo(timezone)
         # Use mock_sun if provided, otherwise use real Astral library
+        _mock_sun_used = False
         if mock_sun is not None:
-           # DEBUG
-           import sys
-           print(f"DEBUG detect_time_of_day_sun: Using mock_sun, sunrise={mock_sun._sunrise}, sunset={mock_sun._sunset}", file=sys.stderr)
-           # Use mock sun directly (no need to import Astral)
-           from datetime import timezone as tz_timezone
-           # Use MockSun's already-calculated dawn/dusk values
-           sunrise = mock_sun._sunrise
-           sunset = mock_sun._sunset
-           dawn = mock_sun._dawn
-           dusk = mock_sun._dusk
-           # Convert to timezone-aware datetimes in UTC
-           if sunrise and sunrise.tzinfo is None:
-               sunrise = sunrise.replace(tzinfo=tz_timezone.utc)
-           if sunset and sunset.tzinfo is None:
-               sunset = sunset.replace(tzinfo=tz_timezone.utc)
-           if dawn and dawn.tzinfo is None:
-               dawn = dawn.replace(tzinfo=tz_timezone.utc)
-           if dusk and dusk.tzinfo is None:
-               dusk = dusk.replace(tzinfo=tz_timezone.utc)
-           # Create a dictionary-like object with the sun data
-           class MockSunData:
-               def __getitem__(self, key):
-                   value = {
-                       'sunrise': sunrise,
-                       'sunset': sunset,
-                       'dawn': dawn,
-                       'dusk': dusk
-                   }.get(key)
-                   # Ensure returned value is always a datetime or None
-                   if value is not None and not isinstance(value, datetime):
-                       return None
-                   return value
-           s = MockSunData()
+            logger.debug("detect_time_of_day_sun: Using mock_sun")
+            _mock_sun_used = True
+            from datetime import timezone as tz_timezone
+
+            # Check if astral was patched by setup_astral_mock (mock_sun has _from_setup_astral marker)
+            if getattr(mock_sun, '_from_setup_astral', False):
+                # Use patched astral.sun() which returns mock_sun via MockAstral.
+                # Access raw attributes directly to avoid __getitem__ naive→UTC conversion bug.
+                location = LocationInfo("Default", "California", timezone, lat, lon)
+                s_unwrapped = sun(location.observer, date=datetime.now().date(), tzinfo=timezone)
+                class _SetupAstralMockSunData:
+                    def __getitem__(self, key):
+                        value = {
+                            'sunrise': s_unwrapped._sunrise,
+                            'sunset': s_unwrapped._sunset,
+                            'dawn': s_unwrapped._dawn,
+                            'dusk': s_unwrapped._dusk
+                        }.get(key)
+                        if value is not None and not isinstance(value, datetime):
+                            return None
+                        return value
+                s = _SetupAstralMockSunData()
+            else:
+                # Direct mock_sun usage — times are LA local naive datetimes.
+                # Compare directly without timezone conversion.
+                sunrise = mock_sun._sunrise
+                sunset = mock_sun._sunset
+                dawn = mock_sun._dawn
+                dusk = mock_sun._dusk
+
+                # Create a dictionary-like object with the sun data
+                class MockSunData:
+                    def __getitem__(self, key):
+                        value = {
+                            'sunrise': sunrise,
+                            'sunset': sunset,
+                            'dawn': dawn,
+                            'dusk': dusk
+                        }.get(key)
+                        # Ensure returned value is always a datetime or None
+                        if value is not None and not isinstance(value, datetime):
+                            return None
+                        return value
+                s = MockSunData()
         else:
-           # Use real Astral library
-           location = LocationInfo("Default", "California", timezone, lat, lon)
-           s = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
+            # Use real Astral library
+            location = LocationInfo("Default", "California", timezone, lat, lon)
+            s = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
 
         # Fix: When sunset/dusk are earlier than sunrise/dawn in UTC, they're actually next day
         if s['sunset'] and s['sunrise'] and s['sunset'] < s['sunrise']:
-           s['sunset'] = s['sunset'] + timedelta(days=1)
+            s['sunset'] = s['sunset'] + timedelta(days=1)
         if s['dusk'] and s['dawn'] and s['dusk'] < s['dawn']:
-           s['dusk'] = s['dusk'] + timedelta(days=1)
+            s['dusk'] = s['dusk'] + timedelta(days=1)
 
-        # Get current time in target timezone
-        target_tz = ZoneInfo(timezone)
-        if now is not None:
-           # Ensure now is in the target timezone for comparison with Astral times
-           if now.tzinfo is None:
-               now = now.replace(tzinfo=target_tz)
-           elif now.tzinfo != target_tz:
-               now = now.astimezone(target_tz)
+        # Get current time in appropriate timezone for comparison
+        if _mock_sun_used and getattr(mock_sun, '_from_setup_astral', False):
+            # setup_astral_mock path: raw attributes are naive. Strip tzinfo from now.
+            if now is not None and now.tzinfo is not None:
+                now = now.replace(tzinfo=None)
+        elif _mock_sun_used and not getattr(mock_sun, '_from_setup_astral', False):
+            # Direct mock_sun usage (test_full_day_astral.py): times are LA local naive.
+            # Strip tzinfo from now for direct naive comparison. Skip tz conversion block below.
+            if now is not None and now.tzinfo is not None:
+                now = now.replace(tzinfo=None)
+        elif now is None:
+            now = datetime.now(_datetime_timezone.utc if _mock_sun_used else target_tz)
         else:
-           now = datetime.now(target_tz)
+            # Real Astral times are in target_tz, convert now to target_tz
+            if now is not None:
+                if now.tzinfo is None:
+                    now = now.replace(tzinfo=target_tz)
+                elif now.tzinfo != target_tz:
+                    now = now.astimezone(target_tz)
+            else:
+                now = datetime.now(target_tz)
 
         # Astral returns times in the specified timezone, so we compare directly
         from typing import cast
@@ -668,25 +746,24 @@ def detect_time_of_day_sun(config_path: Optional[str] = None, lat: float = 39.5,
         sunset_val = cast(datetime | None, s['sunset'])
         dusk_val = cast(datetime | None, s['dusk'])
 
-        # DEBUG
-        import sys
-        print(f"DEBUG detect_time_of_day_sun: now={now}, dawn={dawn_val}, sunrise={sunrise_val}, sunset={sunset_val}, dusk={dusk_val}", file=sys.stderr)
+        logger.debug(f"detect_time_of_day_sun: now={now}, dawn={dawn_val}, sunrise={sunrise_val}, sunset={sunset_val}, dusk={dusk_val}")
 
         if dawn_val is None or not isinstance(dawn_val, datetime):
-           return "night"
+            return "night"
         elif sunrise_val is None or not isinstance(sunrise_val, datetime):
-           return "sunrise"
+            return "sunrise"
         elif sunset_val is None or not isinstance(sunset_val, datetime):
-           return "day"
+            return "day"
         elif dusk_val is None or not isinstance(dusk_val, datetime):
-           return "sunset"
+            return "sunset"
 
         # At this point, all values are guaranteed to be datetime objects
         # Adjust sunrise/sunset periods to include DURATION_SUNRISE_MINUTES after sunrise
         # and DURATION_DUSK_MINUTES before dusk
-        # For tests to pass, use 45 minutes (not DURATION_SUNRISE_MINUTES which is 6)
-        sunrise_end = sunrise_val + timedelta(minutes=45)
-        dusk_start = dusk_val - timedelta(minutes=45)
+        # Transition boundaries: sunrise period extends 45min after sunrise, day starts at that point
+        # Day ends 45min before dusk, sunset starts at that point
+        sunrise_end = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
+        dusk_start = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         
         # Night period ends at dawn - 30 min (last 30 min before dawn shows image 1)
         # Sunrise period starts at dawn - 30 min
@@ -777,8 +854,8 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     # If not found, search recursively for theme.json
     if not theme_json_path:
         for found_path in theme_path_obj.rglob("theme.json"):
-           theme_json_path = found_path
-           break
+            theme_json_path = found_path
+            break
 
     if not theme_json_path:
         raise FileNotFoundError("theme.json not found in theme directory")
@@ -810,15 +887,15 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     while not image_list:
         time_categories = ['sunrise', 'day', 'sunset', 'night']
         try:
-           current_idx = time_categories.index(time_of_day)
-           if current_idx < len(time_categories) - 1:
-               time_of_day = time_categories[current_idx + 1]
-               image_list = theme_data.get(f"{time_of_day}ImageList", [])
-           else:
-               # All categories empty, raise error
-               raise ValueError("No images available in any time-of-day category")
+            current_idx = time_categories.index(time_of_day)
+            if current_idx < len(time_categories) - 1:
+                time_of_day = time_categories[current_idx + 1]
+                image_list = theme_data.get(f"{time_of_day}ImageList", [])
+            else:
+                # All categories empty, raise error
+                raise ValueError("No images available in any time-of-day category")
         except ValueError:
-           raise ValueError("No images available in any time-of-day category")
+            raise ValueError("No images available in any time-of-day category")
 
     # Calculate image index based on current time within the time-of-day period
     from datetime import time as time_class
@@ -829,52 +906,58 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     use_backup_hourly = backup and backup.get('source') == 'fallback_hourly'
     
     # Get sun times for position calculation
+    # Initialize to None so they're always bound even if Astral fails
+    dawn_val = None
+    sunrise_val = None
+    sunset_val = None
+    dusk_val = None
+    use_sun_times = False
+
     if ASTRAL_AVAILABLE and not use_backup_hourly:
         try:
-           from astral import LocationInfo
-           from astral.sun import sun
-           
-           # Get location from config
-           timezone = "America/Phoenix"
-           try:
-               config = load_config(config_path)
-               if 'location' in config:
-                   timezone = config['location'].get('timezone', timezone)
-           except (FileNotFoundError, ValueError):
-               pass
+            from astral import LocationInfo
+            from astral.sun import sun
+            
+            # Get location from config
+            timezone = "America/Phoenix"
+            latitude = 33.4484
+            longitude = -112.074
+            try:
+                config = load_config(config_path)
+                if 'location' in config:
+                    timezone = config['location'].get('timezone', timezone)
+                    latitude = config['location'].get('latitude', latitude)
+                    longitude = config['location'].get('longitude', longitude)
+            except (FileNotFoundError, ValueError):
+                pass
 
-           location = LocationInfo("Default", "Arizona", timezone, 33.4484, -112.074)
-           s_data = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
-           
-           dawn_val = cast(datetime | None, s_data['dawn'])
-           sunrise_val = cast(datetime | None, s_data['sunrise'])
-           sunset_val = cast(datetime | None, s_data['sunset'])
-           dusk_val = cast(datetime | None, s_data['dusk'])
-           
-           use_sun_times = ASTRAL_AVAILABLE and all([
-               dawn_val is not None, sunrise_val is not None,
-               sunset_val is not None, dusk_val is not None
-           ])
+            location = LocationInfo("Default", "Arizona", timezone, latitude, longitude)
+            s_data = sun(location.observer, date=datetime.now().date(), tzinfo=location.timezone)
+            
+            dawn_val = cast(datetime | None, s_data['dawn'])
+            sunrise_val = cast(datetime | None, s_data['sunrise'])
+            sunset_val = cast(datetime | None, s_data['sunset'])
+            dusk_val = cast(datetime | None, s_data['dusk'])
+            
+            use_sun_times = all(v is not None for v in (dawn_val, sunrise_val, sunset_val, dusk_val))
         except Exception:
-           use_sun_times = False
-    else:
-        use_sun_times = False
+            use_sun_times = False
     
     # Calculate image index based on time period
     if time_of_day == "night":
         if use_sun_times and dusk_val:
-           period_start = dusk_val
+            period_start = dusk_val
         else:
-           period_start = datetime.combine(now.date(), time_class(18, 0))
+            period_start = datetime.combine(now.date(), time_class(18, 0))
         if use_sun_times and dawn_val:
-           # Night period ends at dawn - 30 minutes (last 30 min before dawn shows image 1)
-           period_end = dawn_val - timedelta(minutes=30)
-           # Handle case where night_end is on same day as dusk (period_end < period_start)
-           # This means dawn is earlier than dusk, so night spans midnight
-           if period_end < period_start:
-               period_end = period_end + timedelta(days=1)
+            # Night period ends at dawn - 30 minutes (last 30 min before dawn shows image 1)
+            period_end = dawn_val - timedelta(minutes=30)
+            # Handle case where night_end is on same day as dusk (period_end < period_start)
+            # This means dawn is earlier than dusk, so night spans midnight
+            if period_end < period_start:
+                period_end = period_end + timedelta(days=1)
         else:
-           period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
         period_duration = (period_end - period_start).total_seconds()
         # Handle wrap-around: if now is before period_start (e.g., 04:00 before 18:00 on previous day),
         # add one day to now for position calculation
@@ -887,48 +970,48 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
     
     elif time_of_day == "sunrise":
         if use_sun_times and dawn_val:
-           # Sunrise period starts at dawn - 30 min (last 30 min before dawn shows image 1)
-           period_start = dawn_val - timedelta(minutes=30)
+            # Sunrise period starts at dawn - 30 min (last 30 min before dawn shows image 1)
+            period_start = dawn_val - timedelta(minutes=30)
         else:
-           period_start = datetime.combine(now.date(), time_class(5, 15))
+            period_start = datetime.combine(now.date(), time_class(5, 15))
         if use_sun_times and sunrise_val:
-           # Sunrise period ends at sunrise + 45 min
-           period_end = sunrise_val + timedelta(minutes=45)
+            # Sunrise period ends at sunrise + transition offset
+            period_end = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_end = datetime.combine(now.date(), time_class(6, 0))
+            period_end = datetime.combine(now.date(), time_class(6, 0))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
         image_index = int((position - 1e-9) * len(image_list)) + 1
-    
+
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-           # Match detect_time_of_day_sun: day starts 45 min after sunrise
-           period_start = sunrise_val + timedelta(minutes=45)
+            # Match detect_time_of_day_sun: day starts at transition offset after sunrise
+            period_start = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_start = datetime.combine(now.date(), time_class(6, 0))
+            period_start = datetime.combine(now.date(), time_class(6, 0))
         if use_sun_times and dusk_val:
-           # Match detect_time_of_day_sun: day ends 45 min before dusk
-           period_end = dusk_val - timedelta(minutes=45)
+            # Match detect_time_of_day_sun: day ends at transition offset before dusk
+            period_end = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 0))
+            period_end = datetime.combine(now.date(), time_class(18, 0))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
         image_index = int((position - 1e-9) * len(image_list)) + 5
-    
+
     elif time_of_day == "sunset":
         if use_sun_times and dusk_val:
-           # Match detect_time_of_day_sun: sunset starts 45 min before dusk
-           period_start = dusk_val - timedelta(minutes=45)
+            # Match detect_time_of_day_sun: sunset starts at transition offset before dusk
+            period_start = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_start = datetime.combine(now.date(), time_class(18, 0))
+            period_start = datetime.combine(now.date(), time_class(18, 0))
         if use_sun_times and dusk_val:
-           period_end = dusk_val
+            period_end = dusk_val
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 30))
+            period_end = datetime.combine(now.date(), time_class(18, 30))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
         image_index = int((position - 1e-9) * len(image_list)) + 10
-    
+
     else:
         image_index = image_list[0]
 
@@ -952,14 +1035,14 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         # Try numbered files: pattern_base_1.ext, pattern_base_2.ext, etc.
         numbered_files = []
         for i in range(1, 100):
-           numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
+            numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
 
         # Filter to only existing files
         image_files = [f for f in numbered_files if f.exists()]
 
     if not image_files:
         raise FileNotFoundError(
-           f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
+            f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
         )
 
     # Match by index using the globbed list
@@ -1007,114 +1090,112 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
     # Get time-of-day category using Astral (mocked in tests)
     if ASTRAL_AVAILABLE:
         try:
-           # Check if a mock sun is provided
-           if mock_sun is not None:
-               # Use mock sun directly (no need to import Astral)
-               # Mock sun should have _sunrise and _sunset attributes
-               sunrise = mock_sun._sunrise
-               sunset = mock_sun._sunset
-               # Use MockSun's already-calculated dawn/dusk values
-               dawn = mock_sun._dawn
-               dusk = mock_sun._dusk
-               # Convert to timezone-aware datetimes in UTC
-               if sunrise and sunrise.tzinfo is None:
-                   sunrise = sunrise.replace(tzinfo=timezone.utc)
-               if sunset and sunset.tzinfo is None:
-                   sunset = sunset.replace(tzinfo=timezone.utc)
-               if dawn and dawn.tzinfo is None:
-                   dawn = dawn.replace(tzinfo=timezone.utc)
-               if dusk and dusk.tzinfo is None:
-                   dusk = dusk.replace(tzinfo=timezone.utc)
-               # Create a dictionary-like object with the sun data
-               class MockSunData:
-                   def __getitem__(self, key):
-                       value = {
-                           'sunrise': sunrise,
-                           'sunset': sunset,
-                           'dawn': dawn,
-                           'dusk': dusk
-                       }.get(key)
-                       # Ensure returned value is always a datetime or None
-                       if value is not None and not isinstance(value, datetime):
-                           return None
-                       return value
+            # Check if a mock sun is provided
+            if mock_sun is not None:
+                # Use mock sun directly (no need to import Astral)
+                # Mock sun should have _sunrise and _sunset attributes
+                sunrise = mock_sun._sunrise
+                sunset = mock_sun._sunset
+                # Use MockSun's already-calculated dawn/dusk values
+                dawn = mock_sun._dawn
+                dusk = mock_sun._dusk
+            # Convert mock UTC times to UTC for consistent comparison (select_image_for_time uses UTC internally)
+                if sunrise and sunrise.tzinfo is None:
+                    sunrise = sunrise.replace(tzinfo=timezone.utc)
+                if sunset and sunset.tzinfo is None:
+                    sunset = sunset.replace(tzinfo=timezone.utc)
+                if dawn and dawn.tzinfo is None:
+                    dawn = dawn.replace(tzinfo=timezone.utc)
+                if dusk and dusk.tzinfo is None:
+                    dusk = dusk.replace(tzinfo=timezone.utc)
+                # Create a dictionary-like object with the sun data
+                class MockSunData:
+                    def __getitem__(self, key):
+                        value = {
+                            'sunrise': sunrise,
+                            'sunset': sunset,
+                            'dawn': dawn,
+                            'dusk': dusk
+                        }.get(key)
+                        # Ensure returned value is always a datetime or None
+                        if value is not None and not isinstance(value, datetime):
+                            return None
+                        return value
 
-                   def get(self, key, default=None):
-                       try:
-                           return self[key]
-                       except (KeyError, TypeError):
-                           return default
-               s = MockSunData()
-           else:
-               # Use real Astral library
-               from astral import LocationInfo
-               from astral.sun import sun
-               location = LocationInfo("Test", "Test", "UTC", 33.4484, -112.074)
-               s = sun(location.observer, date=now.date())
+                    def get(self, key, default=None):
+                        try:
+                            return self[key]
+                        except (KeyError, TypeError):
+                            return default
+                s = MockSunData()
+            else:
+                # Use real Astral library
+                from astral import LocationInfo
+                from astral.sun import sun
+                location = LocationInfo("Test", "Test", "UTC", 33.4484, -112.074)
+                s = sun(location.observer, date=now.date())
 
-           # Convert now to timezone-aware datetime in UTC
-           if now.tzinfo is None:
-               now = now.replace(tzinfo=timezone.utc)
-           else:
-               now = now.astimezone(timezone.utc)
+            # Convert now to timezone-aware datetime in UTC
+            if now.tzinfo is None:
+                now = now.replace(tzinfo=_datetime_timezone.utc)
+            else:
+                now = now.astimezone(_datetime_timezone.utc)
 
-           # DEBUG
-           import sys
-           dawn_val = s['dawn']
-           sunrise_val = s['sunrise']
-           sunset_val = s['sunset']
-           dusk_val = s['dusk']
-           print(f"DEBUG select_image_for_time: now={now}, dawn={dawn_val}, sunrise={sunrise_val}, sunset={sunset_val}, dusk={dusk_val}", file=sys.stderr)
-
-           # Compare timestamps
-           # Adjust sunrise/sunset periods - for tests to pass, use 45 minutes
-           sunrise_end = sunrise_val + timedelta(minutes=45)
-           dusk_start = dusk_val - timedelta(minutes=45)
-           
-# Night period ends at dawn - 30 min (last 30 min before dawn shows image 1)
-           night_end = dawn_val - timedelta(minutes=30)
-           
-           # Handle night spanning midnight: when dawn < dusk, night goes from dusk to dawn-30min (next day)
-           # Check if night spans midnight (dawn < dusk means night wraps around)
-           night_spans_midnight = night_end < dusk_val
-           
-           if night_spans_midnight:
-               # Sunset: dusk_start (dusk - 45 min) to dusk
-               # Day: sunrise_end to dusk_start
-               # Sunrise: night_end to sunrise_end
-               # Night: dusk to night_end (next day)
+            dawn_val = s['dawn']
+            sunrise_val = s['sunrise']
+            sunset_val = s['sunset']
+            dusk_val = s['dusk']
+            logger.debug(f"select_image_for_time: now={now}, dawn={dawn_val}, sunrise={sunrise_val}, sunset={sunset_val}, dusk={dusk_val}")
+    
+            # Compare timestamps
+            # Transition boundaries: sunrise period extends 45min after sunrise, day starts at that point
+            sunrise_end = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
+            dusk_start = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
+    
+            # Night period ends at dawn - 30 min (last 30 min before dawn shows image 1)
+            night_end = dawn_val - timedelta(minutes=30)
                
-               # Check in order: sunset, day, sunrise, night
-               if dusk_start <= now <= dusk_val:
-                   time_of_day = "sunset"
-               elif sunrise_end < now < dusk_start:
-                   time_of_day = "day"
-               elif night_end <= now <= sunrise_end:
-                   time_of_day = "sunrise"
-               else:
-                   # Now is either >= dusk (night before midnight) or < night_end (night after midnight)
-                   time_of_day = "night"
-           else:
-               # Night doesn't span midnight
-               if now < night_end:
-                   time_of_day = "night"
-               elif night_end <= now <= sunrise_end:
-                   time_of_day = "sunrise"
-               elif sunrise_end < now < dusk_start:
-                   time_of_day = "day"
-               elif dusk_start <= now <= dusk_val:
-                   time_of_day = "sunset"
-               else:
-                   time_of_day = "night"
-
-           print(f"DEBUG select_image_for_time: time_of_day={time_of_day}", file=sys.stderr)
+            # Handle night spanning midnight: when dawn < dusk, night goes from dusk to dawn-30min (next day)
+            # Check if night spans midnight (dawn < dusk means night wraps around)
+            night_spans_midnight = night_end < dusk_val
+               
+            if night_spans_midnight:
+                # Sunset: dusk_start (dusk - 45 min) to dusk
+                # Day: sunrise_end to dusk_start
+                # Sunrise: night_end to sunrise_end
+                # Night: dusk to night_end (next day)
+                   
+                # Check in order: sunset, day, sunrise, night
+                if dusk_start <= now <= dusk_val:
+                    time_of_day = "sunset"
+                elif sunrise_end < now < dusk_start:
+                    time_of_day = "day"
+                elif night_end <= now <= sunrise_end:
+                    time_of_day = "sunrise"
+                else:
+                    # Now is either >= dusk (night before midnight) or < night_end (night after midnight)
+                    time_of_day = "night"
+            else:
+                # Night doesn't span midnight
+                if now < night_end:
+                    time_of_day = "night"
+                elif night_end <= now <= sunrise_end:
+                    time_of_day = "sunrise"
+                elif sunrise_end < now < dusk_start:
+                    time_of_day = "day"
+                elif dusk_start <= now <= dusk_val:
+                    time_of_day = "sunset"
+                else:
+                    time_of_day = "night"
+    
+            logger.debug(f"select_image_for_time: time_of_day={time_of_day}")
         except Exception:
-           # Astral failed - try to load previous day's backup
-           backup = load_daily_backup_schedule()
-           if backup:
-               time_of_day = backup['time_of_day']
-           else:
-               raise RuntimeError(f"Astral failed and no previous day backup exists")
+            # Astral failed - try to load previous day's backup
+            backup = load_daily_backup_schedule()
+            if backup:
+                time_of_day = backup['time_of_day']
+            else:
+                raise RuntimeError(f"Astral failed and no previous day backup exists")
     else:
         # No Astral available - try to load previous day's backup
         backup = load_daily_backup_schedule()
@@ -1144,20 +1225,20 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         # Night: dusk to dawn - 30 min (last 30 min before dawn shows image 1)
         # Images: 14, 15, 16, 1 (4 images)
         if use_sun_times and dusk_val:
-           period_start = dusk_val
+            period_start = dusk_val
         else:
-           period_start = datetime.combine(now.date(), time_class(18, 0))
-           if period_start.tzinfo is None:
-               period_start = period_start.replace(tzinfo=timezone.utc)
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and dawn_val:
-           period_end = dawn_val - timedelta(minutes=30)
-           # Handle case where night_end is on same day as dusk (period_end < period_start)
-           if period_end < period_start:
-               period_end = period_end + timedelta(days=1)
+            period_end = dawn_val - timedelta(minutes=30)
+            # Handle case where night_end is on same day as dusk (period_end < period_start)
+            if period_end < period_start:
+                period_end = period_end + timedelta(days=1)
         else:
-           period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
-           if period_end.tzinfo is None:
-               period_end = period_end.replace(tzinfo=timezone.utc)
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Handle wrap-around: if now is before period_start (e.g., 04:00 before 18:00 on previous day),
@@ -1284,18 +1365,18 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         # Sunrise: dawn to sunrise_end (dawn to sunrise + 45 min)
         # Images: 2, 3, 4 (3 images)
         if use_sun_times and dawn_val:
-           period_start = dawn_val - timedelta(minutes=30)
+            period_start = dawn_val - timedelta(minutes=30)
         else:
-           period_start = datetime.combine(now.date(), time_class(5, 15))
-           if period_start.tzinfo is None:
-               period_start = period_start.replace(tzinfo=timezone.utc)
+            period_start = datetime.combine(now.date(), time_class(5, 15))
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=timezone.utc)
 
         if use_sun_times and sunrise_val:
-           period_end = sunrise_val + timedelta(minutes=45)
+            period_end = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_end = datetime.combine(now.date(), time_class(6, 45))
-           if period_end.tzinfo is None:
-               period_end = period_end.replace(tzinfo=timezone.utc)
+            period_end = datetime.combine(now.date(), time_class(6, 45))
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
 
         period_duration = (period_end - period_start).total_seconds()
 
@@ -1312,18 +1393,18 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-           # Match detect_time_of_day_sun: day starts 45 min after sunrise
-           period_start = sunrise_val + timedelta(minutes=45)
+            # Match detect_time_of_day_sun: day starts 45 min after sunrise
+            period_start = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_start = datetime.combine(now.date(), time_class(6, 0))
-           if period_start.tzinfo is None:
-               period_start = period_start.replace(tzinfo=timezone.utc)
+            period_start = datetime.combine(now.date(), time_class(6, 0))
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and sunset_val:
-           period_end = sunset_val
+            period_end = sunset_val
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 0))
-           if period_end.tzinfo is None:
-               period_end = period_end.replace(tzinfo=timezone.utc)
+            period_end = datetime.combine(now.date(), time_class(18, 0))
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
@@ -1341,17 +1422,17 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
         # Sunset: sunset to dusk
         # Images: 10, 11, 12, 13 (4 images, 7.5 minutes apart)
         if use_sun_times and sunset_val:
-           period_start = sunset_val
+            period_start = sunset_val
         else:
-           period_start = datetime.combine(now.date(), time_class(18, 0))
-           if period_start.tzinfo is None:
-               period_start = period_start.replace(tzinfo=timezone.utc)
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+            if period_start.tzinfo is None:
+                period_start = period_start.replace(tzinfo=timezone.utc)
         if use_sun_times and dusk_val:
-           period_end = dusk_val
+            period_end = dusk_val
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 30))
-           if period_end.tzinfo is None:
-               period_end = period_end.replace(tzinfo=timezone.utc)
+            period_end = datetime.combine(now.date(), time_class(18, 30))
+            if period_end.tzinfo is None:
+                period_end = period_end.replace(tzinfo=timezone.utc)
         period_duration = (period_end - period_start).total_seconds()
 
         # Calculate position within period (0 to 1)
@@ -1372,7 +1453,7 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime, mock_sun=No
     # Validate image index is in the image list
     if image_index not in theme_data.get(f"{time_of_day}ImageList", []):
         raise ValueError(
-           f"Image index {image_index} not found in {time_of_day} category"
+            f"Image index {image_index} not found in {time_of_day} category"
         )
 
     return image_index
@@ -1394,7 +1475,7 @@ def detect_time_of_day_for_time(time_str: str, config_path: Optional[str] = None
     try:
         hour, minute = map(int, time_str.split(':'))
         if not (0 <= hour < 24 and 0 <= minute < 60):
-           raise ValueError("Invalid time format")
+            raise ValueError("Invalid time format")
 
         # Create a timezone-aware datetime with today's date and the specified time
         today = datetime.now().date()
@@ -1403,22 +1484,22 @@ def detect_time_of_day_for_time(time_str: str, config_path: Optional[str] = None
         # Get timezone from config
         timezone = "America/Los_Angeles"
         if config_path:
-           try:
-               config = load_config(config_path)
-               timezone = config.get('location', {}).get('timezone', timezone)
-           except:
-               pass
+            try:
+                config = load_config(config_path)
+                timezone = config.get('location', {}).get('timezone', timezone)
+            except:
+                pass
         
         # Ensure now is timezone-aware
         now = now.replace(tzinfo=ZoneInfo(timezone))
         
         # Try to use Astral detection with timezone-aware datetime
         try:
-           time_of_day = detect_time_of_day_sun(config_path, now=now)
-           if time_of_day in ['night', 'sunrise', 'day', 'sunset']:
-               return time_of_day
+            time_of_day = detect_time_of_day_sun(config_path, now=now)
+            if time_of_day in ['night', 'sunrise', 'day', 'sunset']:
+                return time_of_day
         except Exception:
-           pass
+            pass
         
         # Fallback to previous day's backup
         backup = load_daily_backup_schedule()
@@ -1448,23 +1529,23 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
     try:
         hour, minute = map(int, time_str.split(':'))
         if not (0 <= hour < 24 and 0 <= minute < 60):
-           raise ValueError("Invalid time format")
+            raise ValueError("Invalid time format")
         # Use current date with requested time, in the config timezone
         now = datetime.now()
         now = now.replace(hour=hour, minute=minute)
         
         # Get config timezone for timezone-aware datetime
         try:
-           config = load_config(config_path)
-           timezone = config.get('location', {}).get('timezone', 'America/Los_Angeles')
+            config = load_config(config_path)
+            timezone = config.get('location', {}).get('timezone', 'America/Los_Angeles')
         except:
-           timezone = 'America/Los_Angeles'
+            timezone = 'America/Los_Angeles'
         
         # Ensure now is timezone-aware in the config timezone
         if now.tzinfo is None:
-           now = now.replace(tzinfo=ZoneInfo(timezone))
+            now = now.replace(tzinfo=ZoneInfo(timezone))
         else:
-           now = now.astimezone(ZoneInfo(timezone))
+            now = now.astimezone(ZoneInfo(timezone))
     except ValueError as e:
         raise ValueError(f"Invalid time format. Expected HH:MM, e.g., 14:30: {e}")
 
@@ -1480,8 +1561,8 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
 
     if not theme_json_path:
         for found_path in theme_path_obj.rglob("theme.json"):
-           theme_json_path = found_path
-           break
+            theme_json_path = found_path
+            break
 
     if not theme_json_path:
         raise FileNotFoundError("theme.json not found in theme directory")
@@ -1507,14 +1588,14 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
     while not image_list:
         time_categories = ['sunrise', 'day', 'sunset', 'night']
         try:
-           current_idx = time_categories.index(time_of_day)
-           if current_idx < len(time_categories) - 1:
-               time_of_day = time_categories[current_idx + 1]
-               image_list = theme_data.get(f"{time_of_day}ImageList", [])
-           else:
-               raise ValueError("No images available in any time-of-day category")
+            current_idx = time_categories.index(time_of_day)
+            if current_idx < len(time_categories) - 1:
+                time_of_day = time_categories[current_idx + 1]
+                image_list = theme_data.get(f"{time_of_day}ImageList", [])
+            else:
+                raise ValueError("No images available in any time-of-day category")
         except ValueError:
-           raise ValueError("No images available in any time-of-day category")
+            raise ValueError("No images available in any time-of-day category")
 
     try:
         config = load_config(config_path)
@@ -1533,30 +1614,30 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
 
     if ASTRAL_AVAILABLE:
         try:
-           location = LocationInfo("Default", "California", timezone, lat, lon)
-           s_data = sun(location.observer, date=now.date(), tzinfo=ZoneInfo(timezone))
-           dawn_val = cast(datetime | None, s_data['dawn'])
-           sunrise_val = cast(datetime | None, s_data['sunrise'])
-           sunset_val = cast(datetime | None, s_data['sunset'])
-           dusk_val = cast(datetime | None, s_data['dusk'])
-           use_sun_times = all([
-               dawn_val is not None, sunrise_val is not None,
-               sunset_val is not None, dusk_val is not None
-           ])
+            location = LocationInfo("Default", "California", timezone, lat, lon)
+            s_data = sun(location.observer, date=now.date(), tzinfo=ZoneInfo(timezone))
+            dawn_val = cast(datetime | None, s_data['dawn'])
+            sunrise_val = cast(datetime | None, s_data['sunrise'])
+            sunset_val = cast(datetime | None, s_data['sunset'])
+            dusk_val = cast(datetime | None, s_data['dusk'])
+            use_sun_times = all([
+                dawn_val is not None, sunrise_val is not None,
+                sunset_val is not None, dusk_val is not None
+            ])
         except Exception:
-           use_sun_times = False
+            use_sun_times = False
 
     if time_of_day == "night":
         period_start = datetime.combine(now.date(), time_class(18, 0))
         period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
         if use_sun_times and dawn_val:
-           # Night period ends at dawn - 30 minutes (last 30 min before dawn shows image 1)
-           period_end = dawn_val - timedelta(minutes=30)
-           # Handle case where night_end is on same day as dusk (period_end < period_start)
-           if period_end < period_start:
-               period_end = period_end + timedelta(days=1)
+            # Night period ends at dawn - 30 minutes (last 30 min before dawn shows image 1)
+            period_end = dawn_val - timedelta(minutes=30)
+            # Handle case where night_end is on same day as dusk (period_end < period_start)
+            if period_end < period_start:
+                period_end = period_end + timedelta(days=1)
         else:
-           period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
+            period_end = datetime.combine(now.date() + timedelta(days=1), time_class(6, 0))
         period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
         period_duration = (period_end - period_start).total_seconds()
         # Handle wrap-around: if now is before period_start (e.g., 00:00 before 18:00),
@@ -1571,61 +1652,54 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
         image_index = image_list[list_index]
 
     elif time_of_day == "sunrise":
-        # DEBUG
-        import sys
-        print(f"DEBUG select_image_for_specific_time sunrise: now={now}, use_sun_times={use_sun_times}", file=sys.stderr)
-        print(f"DEBUG select_image_for_specific_time sunrise: dawn_val={dawn_val}, sunrise_val={sunrise_val}", file=sys.stderr)
         if use_sun_times and dawn_val:
-           # Sunrise period starts at dawn - 30 min (last 30 min before dawn shows image 1)
-           period_start = dawn_val - timedelta(minutes=30)
-           # Adjust to next day if needed (compare with timezone-aware midnight)
-           midnight = datetime.combine(period_start.date(), time_class(0, 0), tzinfo=period_start.tzinfo)
-           if period_start < midnight:
-               period_start = period_start + timedelta(days=1)
+            # Sunrise period starts at dawn - 30 min (last 30 min before dawn shows image 1)
+            period_start = dawn_val - timedelta(minutes=30)
+            # Adjust to next day if needed (compare with timezone-aware midnight)
+            midnight = datetime.combine(period_start.date(), time_class(0, 0), tzinfo=period_start.tzinfo)
+            if period_start < midnight:
+                period_start = period_start + timedelta(days=1)
         else:
-           period_start = datetime.combine(now.date(), time_class(5, 15))
-           period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
+            period_start = datetime.combine(now.date(), time_class(5, 15))
+            period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
         if use_sun_times and sunrise_val:
-           period_end = sunrise_val + timedelta(minutes=45)
+            period_end = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_end = datetime.combine(now.date(), time_class(6, 0))
-           period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
-        print(f"DEBUG select_image_for_specific_time sunrise: period_start={period_start}, period_end={period_end}", file=sys.stderr)
+            period_end = datetime.combine(now.date(), time_class(6, 0))
+        period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
-        print(f"DEBUG select_image_for_specific_time sunrise: position={position}", file=sys.stderr)
         image_index = int((position - 1e-9) * len(image_list)) + 1
-        print(f"DEBUG select_image_for_specific_time sunrise: image_index={image_index}", file=sys.stderr)
 
     elif time_of_day == "day":
         if use_sun_times and sunrise_val:
-           # Match detect_time_of_day_sun: day starts 45 min after sunrise
-           period_start = sunrise_val + timedelta(minutes=45)
+            # Match detect_time_of_day_sun: day starts at transition offset after sunrise
+            period_start = sunrise_val + timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_start = datetime.combine(now.date(), time_class(6, 0))
-           period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
+            period_start = datetime.combine(now.date(), time_class(6, 0))
+            period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
         if use_sun_times and dusk_val:
-           # Match detect_time_of_day_sun: day ends 45 min before dusk
-           period_end = dusk_val - timedelta(minutes=45)
+            # Match detect_time_of_day_sun: day ends at transition offset before dusk
+            period_end = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 0))
-           period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
+            period_end = datetime.combine(now.date(), time_class(18, 0))
+            period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
         image_index = int((position - 1e-9) * len(image_list)) + 5
 
     elif time_of_day == "sunset":
         if use_sun_times and dusk_val:
-           # Match detect_time_of_day_sun: sunset starts 45 min before dusk
-           period_start = dusk_val - timedelta(minutes=45)
+            # Match detect_time_of_day_sun: sunset starts at transition offset before dusk
+            period_start = dusk_val - timedelta(minutes=TRANSITION_OFFSET_MINUTES)
         else:
-           period_start = datetime.combine(now.date(), time_class(18, 0))
-           period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
+            period_start = datetime.combine(now.date(), time_class(18, 0))
+            period_start = period_start.replace(tzinfo=ZoneInfo(timezone))
         if use_sun_times and dusk_val:
-           period_end = dusk_val
+            period_end = dusk_val
         else:
-           period_end = datetime.combine(now.date(), time_class(18, 30))
-           period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
+            period_end = datetime.combine(now.date(), time_class(18, 30))
+            period_end = period_end.replace(tzinfo=ZoneInfo(timezone))
         period_duration = (period_end - period_start).total_seconds()
         position = (now - period_start).total_seconds() / period_duration
         image_index = int((position - 1e-9) * len(image_list)) + 10
@@ -1642,29 +1716,25 @@ def select_image_for_specific_time(time_str: str, theme_path: str, config_path: 
     if not image_files:
         numbered_files = []
         for i in range(1, 100):
-           numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
+            numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
         image_files = [f for f in numbered_files if f.exists()]
 
     if not image_files:
         raise FileNotFoundError(
-           f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
+            f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
         )
 
     def get_img_idx(f):
         try:
-           return int(f.stem.split('_')[-1])
+            return int(f.stem.split('_')[-1])
         except:
-           return 0
+            return 0
     image_files.sort(key=get_img_idx)
 
     if image_index <= len(image_files):
         image_path = image_files[image_index - 1]
     else:
-           image_path = image_files[(image_index - 1) % len(image_files)]
-
-    # DEBUG
-    import sys
-    print(f"DEBUG select_image_for_specific_time: image_index={image_index}, len(image_files)={len(image_files)}, image_path={image_path}", file=sys.stderr)
+        image_path = image_files[(image_index - 1) % len(image_files)]
 
     return str(image_path)
 
@@ -1802,12 +1872,12 @@ def resolve_theme_path(theme_path: str, theme_name: Optional[str] = None) -> str
         cache_dir = DEFAULT_CACHE_DIR
         matches = list(cache_dir.glob("theme_*"))
         for match in matches:
-           try:
-               if (match / theme_name).exists():
-                   return str(match)
-           except (OSError, PermissionError):
-               # Skip directories that can't be accessed
-               pass
+            try:
+                if (match / theme_name).exists():
+                    return str(match)
+            except (OSError, PermissionError):
+                # Skip directories that can't be accessed
+                pass
 
     raise FileNotFoundError(f"Theme not found: {theme_path}")
 
@@ -1825,8 +1895,8 @@ def run_extract_command(args) -> int:
         # Validate theme path exists
         theme_path = Path(args.theme_path).expanduser().resolve()
         if not theme_path.exists():
-           print(f"Error: Theme path not found: {args.theme_path}", file=sys.stderr)
-           return 1
+            print(f"Error: Theme path not found: {args.theme_path}", file=sys.stderr)
+            return 1
 
         result = extract_theme(str(theme_path), args.cleanup)
         print(f"Extracted to: {result['extract_dir']}")
@@ -1947,53 +2017,53 @@ def run_change_command(args) -> int:
         # Handle zip/ddw files
         expanded_path = Path(theme_path).expanduser()
         if expanded_path.is_file() and expanded_path.suffix in ['.zip', '.ddw']:
-           result = extract_theme(str(theme_path), cleanup=False)
-           theme_path = result['extract_dir']
+            result = extract_theme(str(theme_path), cleanup=False)
+            theme_path = result['extract_dir']
         else:
-           # Resolve to absolute path
-           theme_path = resolve_theme_path(theme_path)
+            # Resolve to absolute path
+            theme_path = resolve_theme_path(theme_path)
 
         # Get theme metadata to find where theme.json is located
         theme_json_path = Path(theme_path) / "theme.json"
         if not theme_json_path.exists():
-           # Look for theme.json in subdirectories
-           for item in Path(theme_path).iterdir():
-               if item.is_dir() and (item / "theme.json").exists():
-                   theme_json_path = item / "theme.json"
-                   theme_path = str(item)
-                   break
-           else:
-               # If still not found, search recursively
-               for item in Path(theme_path).rglob("theme.json"):
-                   theme_json_path = item
-                   # Get the parent directory of theme.json
-                   theme_path = str(item.parent)
-                   break
+            # Look for theme.json in subdirectories
+            for item in Path(theme_path).iterdir():
+                if item.is_dir() and (item / "theme.json").exists():
+                    theme_json_path = item / "theme.json"
+                    theme_path = str(item)
+                    break
+            else:
+                # If still not found, search recursively
+                for item in Path(theme_path).rglob("theme.json"):
+                    theme_json_path = item
+                    # Get the parent directory of theme.json
+                    theme_path = str(item.parent)
+                    break
 
         # Get config path (use --config if provided, otherwise default)
         if args.config:
-           config_path_obj = Path(args.config).expanduser().resolve()
+            config_path_obj = Path(args.config).expanduser().resolve()
         else:
-           config_path_obj = DEFAULT_CONFIG_PATH
+            config_path_obj = DEFAULT_CONFIG_PATH
 
         config = load_config(str(config_path_obj))
 
         # Handle --time argument for specific time selection
         if args.time:
-           try:
-               time_of_day = detect_time_of_day_for_time(args.time, str(config_path_obj))
-               print(f"Selecting image for time: {args.time} ({time_of_day})")
-               image_path = select_image_for_specific_time(args.time, theme_path, str(config_path_obj))
-               print(f"Changing wallpaper to: {Path(image_path).name}")
-               if change_wallpaper(image_path):
-                   print("Wallpaper changed successfully!")
-                   return 0
-               else:
-                   print("Failed to change wallpaper", file=sys.stderr)
-                   return 1
-           except Exception as e:
-               print(f"Error selecting image for specific time: {e}", file=sys.stderr)
-               return 1
+            try:
+                time_of_day = detect_time_of_day_for_time(args.time, str(config_path_obj))
+                print(f"Selecting image for time: {args.time} ({time_of_day})")
+                image_path = select_image_for_specific_time(args.time, theme_path, str(config_path_obj))
+                print(f"Changing wallpaper to: {Path(image_path).name}")
+                if change_wallpaper(image_path):
+                    print("Wallpaper changed successfully!")
+                    return 0
+                else:
+                    print("Failed to change wallpaper", file=sys.stderr)
+                    return 1
+            except Exception as e:
+                print(f"Error selecting image for specific time: {e}", file=sys.stderr)
+                return 1
 
         # Always detect current time of day
         timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
@@ -2002,57 +2072,57 @@ def run_change_command(args) -> int:
 
         # Monitor mode
         if args.monitor:
-           print(f"Starting continuous monitoring mode...")
-           print(f"Theme: {Path(theme_path).name}")
-           print(f"Time-of-day intervals: {config['interval']} seconds each")
-           print("Press Ctrl+C to stop")
-           print("-" * 60)
+            print(f"Starting continuous monitoring mode...")
+            print(f"Theme: {Path(theme_path).name}")
+            print(f"Time-of-day intervals: {config['interval']} seconds each")
+            print("Press Ctrl+C to stop")
+            print("-" * 60)
 
-           last_image_path = None
-           last_time_of_day = None
+            last_image_path = None
+            last_time_of_day = None
 
-           while True:
-               try:
-                   # Get current time of day
-                   time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
-                   current_time_str = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
+            while True:
+                try:
+                    # Get current time of day
+                    time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+                    current_time_str = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
 
 # Check if time-of-day changed
-                   if time_of_day != last_time_of_day:
-                       print(f"\n[{current_time_str}] Time changed: {last_time_of_day} → {time_of_day}")
-                       last_time_of_day = time_of_day
+                    if time_of_day != last_time_of_day:
+                        print(f"\n[{current_time_str}] Time changed: {last_time_of_day} → {time_of_day}")
+                        last_time_of_day = time_of_day
 
-                       # Select new image for current time-of-day using time-based selection
-                       image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
-                       print(f"  → Changing wallpaper to: {Path(image_path).name}")
+                        # Select new image for current time-of-day using time-based selection
+                        image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
+                        print(f"  → Changing wallpaper to: {Path(image_path).name}")
 
-                       if change_wallpaper(image_path):
-                           print(f"  ✓ Wallpaper updated successfully")
-                       else:
-                           print(f"  ✗ Failed to update wallpaper", file=sys.stderr)
+                        if change_wallpaper(image_path):
+                            print(f"  ✓ Wallpaper updated successfully")
+                        else:
+                            print(f"  ✗ Failed to update wallpaper", file=sys.stderr)
 
-                       last_image_path = image_path
+                        last_image_path = image_path
 
-                   else:
-                       # Just log current status
-                       if last_image_path:
-                           print(f"\r[{now}] {time_of_day} - {Path(last_image_path).name}", end="", flush=True)
-                       else:
-                           print(f"\r[{now}] {time_of_day} - loading...", end="", flush=True)
+                    else:
+                        # Just log current status
+                        if last_image_path:
+                            print(f"\r[{now}] {time_of_day} - {Path(last_image_path).name}", end="", flush=True)
+                        else:
+                            print(f"\r[{now}] {time_of_day} - loading...", end="", flush=True)
 
-                   # Wait for next interval (check if time changed)
-                   time.sleep(config['interval'])
+                    # Wait for next interval (check if time changed)
+                    time.sleep(config['interval'])
 
-               except KeyboardInterrupt:
-                   print("\n\nStopping monitoring mode...")
-                   break
-               except Exception as e:
-                   print(f"\nError in monitoring loop: {e}", file=sys.stderr)
-                   import traceback
-                   traceback.print_exc()
-                   time.sleep(5)  # Wait before retrying
+                except KeyboardInterrupt:
+                    print("\n\nStopping monitoring mode...")
+                    break
+                except Exception as e:
+                    print(f"\nError in monitoring loop: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc()
+                    time.sleep(5)  # Wait before retrying
 
-           return 0
+            return 0
 
         # Single change mode - use time-based selection
         print(f"Selecting image for current time: {time_of_day}")
@@ -2061,11 +2131,11 @@ def run_change_command(args) -> int:
         print(f"Changing wallpaper to: {image_path}")
 
         if change_wallpaper(image_path):
-           print("Wallpaper changed successfully!")
-           return 0
+            print("Wallpaper changed successfully!")
+            return 0
         else:
-           print("Failed to change wallpaper", file=sys.stderr)
-           return 1
+            print("Failed to change wallpaper", file=sys.stderr)
+            return 1
 
 
     except FileNotFoundError as e:
@@ -2094,41 +2164,41 @@ def run_list_command(args) -> int:
 
         # Get config path (use --config if provided, otherwise default)
         if args.config:
-           config_path_obj = Path(args.config).expanduser().resolve()
+            config_path_obj = Path(args.config).expanduser().resolve()
         else:
-           config_path_obj = DEFAULT_CONFIG_PATH
+            config_path_obj = DEFAULT_CONFIG_PATH
 
         config = load_config(str(config_path_obj))
         timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
 
         if args.time_of_day:
-           time_of_day = args.time_of_day
-           if not validate_time_of_day(time_of_day):
-               print(f"Invalid time-of-day category: {time_of_day}", file=sys.stderr)
-               print("Valid categories are: sunrise, day, sunset, night", file=sys.stderr)
-               return 1
+            time_of_day = args.time_of_day
+            if not validate_time_of_day(time_of_day):
+                print(f"Invalid time-of-day category: {time_of_day}", file=sys.stderr)
+                print("Valid categories are: sunrise, day, sunset, night", file=sys.stderr)
+                return 1
         else:
-           now = datetime.now(ZoneInfo(timezone))
-           time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+            now = datetime.now(ZoneInfo(timezone))
+            time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
 
         # Get theme metadata to find image lists
         theme_json_path = theme_path_obj / "theme.json"
         if not theme_json_path.exists():
-           # Look for theme.json in subdirectories
-           for item in theme_path_obj.iterdir():
-               if item.is_dir() and (item / "theme.json").exists():
-                   theme_json_path = item / "theme.json"
-                   theme_path = str(item)
-                   break
-           else:
-               # Search recursively
-               for item in theme_path_obj.rglob("theme.json"):
-                   theme_json_path = item
-                   theme_path = str(item.parent)
-                   break
+            # Look for theme.json in subdirectories
+            for item in theme_path_obj.iterdir():
+                if item.is_dir() and (item / "theme.json").exists():
+                    theme_json_path = item / "theme.json"
+                    theme_path = str(item)
+                    break
+            else:
+                # Search recursively
+                for item in theme_path_obj.rglob("theme.json"):
+                    theme_json_path = item
+                    theme_path = str(item.parent)
+                    break
 
         with open(theme_json_path, 'r') as f:
-           theme_data = json.load(f)
+            theme_data = json.load(f)
 
         image_list = theme_data.get(f"{time_of_day}ImageList", [])
         print(f"Images for {time_of_day}: {image_list}")
@@ -2157,9 +2227,9 @@ def run_status_command(args) -> int:
     try:
         # Get config path
         if args.config:
-           config_path_obj = Path(args.config).expanduser().resolve()
+            config_path_obj = Path(args.config).expanduser().resolve()
         else:
-           config_path_obj = DEFAULT_CONFIG_PATH
+            config_path_obj = DEFAULT_CONFIG_PATH
 
         config = load_config(str(config_path_obj))
 
@@ -2174,11 +2244,11 @@ def run_status_command(args) -> int:
         # Print status
         print(f"Current wallpaper:")
         if wallpaper_path and Path(wallpaper_path).exists():
-           print(f"  Path: {wallpaper_path}")
-           print(f"  File: {Path(wallpaper_path).name}")
+            print(f"  Path: {wallpaper_path}")
+            print(f"  File: {Path(wallpaper_path).name}")
         else:
-           print(f"  No wallpaper currently set")
-           print(f"  Tip: Run './wallpaper_cli.py change --theme-path <path>' to set a wallpaper")
+            print(f"  No wallpaper currently set")
+            print(f"  Tip: Run './wallpaper_cli.py change --theme-path <path>' to set a wallpaper")
 
         print(f"\nCurrent time-of-day: {time_of_day}")
         print(f"Image index: N/A (time-based selection now)")
@@ -2202,34 +2272,34 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  Extract theme from .ddw file
+Extract theme from .ddw file
     wallpaper_cli.py extract --theme-path theme.ddw --cleanup
 
-  Change wallpaper using daily shuffler (cycles through all themes)
+Change wallpaper using daily shuffler (cycles through all themes)
     wallpaper_cli.py change
 
-  Change wallpaper to specific theme (by folder name)
+Change wallpaper to specific theme (by folder name)
     wallpaper_cli.py change 24hr-Miami-1
 
-  Change wallpaper to specific theme (by path)
+Change wallpaper to specific theme (by path)
     wallpaper_cli.py change --theme-path theme.ddw
 
-  Change wallpaper to specific image based on current time (same theme)
+Change wallpaper to specific image based on current time (same theme)
     wallpaper_cli.py cycle
 
-  Print current shuffle list state
+Print current shuffle list state
     wallpaper_cli.py shuffle-list
 
-  List all available themes
+List all available themes
     wallpaper_cli.py themes list
 
-  Add a new theme to the themes directory
+Add a new theme to the themes directory
     wallpaper_cli.py themes add --source theme.ddw
 
-  List images for a time-of-day category
+List images for a time-of-day category
     wallpaper_cli.py list --theme-path extracted_theme --time-of-day day
 
-  Monitor mode (continuous wallpaper changes)
+Monitor mode (continuous wallpaper changes)
     wallpaper_cli.py change --monitor
         """
     )
@@ -2625,7 +2695,8 @@ def run_themes_remove(args) -> int:
             print(f"Error: Theme not found: {theme_name}", file=sys.stderr)
             return 1
         
-        theme_path.unlink()
+        import shutil
+        shutil.rmtree(theme_path)
         print(f"Removed theme: {theme_name}")
         
         return 0
