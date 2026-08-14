@@ -11,7 +11,7 @@ from pathlib import Path
 from datetime import date
 from typing import List, Tuple, Optional, Dict, Any
 
-from kwallpaper.wallpaper_changer import DEFAULT_SHUFFLE_LIST_PATH
+from kwallpaper.config import DEFAULT_SHUFFLE_LIST_PATH
 
 
 def create_initial_shuffle(themes: List[str]) -> List[str]:

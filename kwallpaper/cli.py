@@ -1,0 +1,785 @@
+#!/usr/bin/env python3
+"""
+kWallpaper CLI dispatch.
+
+Pure argparse + command handlers.  All heavy lifting lives in the
+kwallpaper.core / themes / selection / wallpaper modules.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from kwallpaper.config import (
+    DEFAULT_CONFIG_PATH,
+    DEFAULT_THEMES_DIR,
+    load_config,
+)
+from kwallpaper.suntime import (
+    TIME_CATEGORIES,
+    detect_time_of_day_for_time,
+    detect_time_of_day_sun,
+)
+from kwallpaper.selection import (
+    select_image_for_specific_time,
+    select_image_for_time_cli,
+)
+from kwallpaper.themes import (
+    discover_themes,
+    extract_theme,
+    resolve_theme_path,
+)
+from kwallpaper.wallpaper import change_wallpaper, get_current_wallpaper
+
+
+def validate_time_of_day(time_of_day: str) -> bool:
+    """Validate time-of-day category."""
+    return time_of_day in TIME_CATEGORIES
+
+
+# ============================================================================
+# EXTRACT COMMAND
+# ============================================================================
+
+def run_extract_command(args) -> int:
+    """Handle extract subcommand."""
+    try:
+        # Validate theme path exists
+        theme_path = Path(args.theme_path).expanduser().resolve()
+        if not theme_path.exists():
+            print(f"Error: Theme path not found: {args.theme_path}", file=sys.stderr)
+            return 1
+
+        result = extract_theme(str(theme_path), args.cleanup)
+        print(f"Extracted to: {result['extract_dir']}")
+        print(f"Theme: {result['displayName']}")
+        print(f"Image credits: {result['imageCredits']}")
+        print(f"Image filename pattern: {result['imageFilename']}")
+        print(f"Sunrise images: {result['sunriseImageList']}")
+        print(f"Day images: {result['dayImageList']}")
+        print(f"Sunset images: {result['sunsetImageList']}")
+        print(f"Night images: {result['nightImageList']}")
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error extracting theme: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+# ============================================================================
+# CHANGE COMMAND
+# ============================================================================
+
+def run_change_command(args) -> int:
+    """Handle change subcommand with daily shuffler support."""
+    try:
+        from kwallpaper.shuffle_list_manager import (
+            create_initial_shuffle,
+            check_and_reshuffle,
+            save_shuffle_list,
+            load_shuffle_list,
+            get_current_date,
+            check_day_passed,
+            save_theme_change_date,
+            load_theme_change_date,
+        )
+
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
+
+        # Check if manual theme path override is provided
+        if args.theme_path:
+            # Manual theme selection mode
+            theme_path = args.theme_path
+
+            # Check if theme_path is a folder name (not a path with slashes)
+            if '/' not in theme_path and '\\' not in theme_path:
+                try:
+                    themes = discover_themes()
+                    theme_dict = {Path(path).name: path for _, path in themes}
+                    if theme_path in theme_dict:
+                        theme_path = theme_dict[theme_path]
+                        print(f"Using theme folder: {theme_path}")
+                    else:
+                        print(f"Error: Theme '{theme_path}' not found in themes directory", file=sys.stderr)
+                        return 1
+                except FileNotFoundError as e:
+                    print(f"Error: {e}", file=sys.stderr)
+                    return 1
+            else:
+                print(f"Using manual theme selection: {theme_path}")
+        else:
+            # Daily shuffler mode
+            print("Using daily shuffler")
+
+            try:
+                themes = discover_themes()
+            except FileNotFoundError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+            except PermissionError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                return 1
+
+            if not themes:
+                print("Error: No themes found in themes directory", file=sys.stderr)
+                return 1
+
+            # Load or create shuffle list
+            shuffle_state = load_shuffle_list()
+            shuffle_list = shuffle_state.get("shuffle_list", [])
+            current_index = shuffle_state.get("current_index", 0)
+            last_used_date = shuffle_state.get("last_used_date", "")
+
+            # Check if reshuffle is needed
+            if check_and_reshuffle(shuffle_list, current_index, last_used_date):
+                print("Reshuffling themes...")
+                theme_paths = [path for _, path in themes]
+                shuffle_list = create_initial_shuffle(theme_paths)
+                current_index = 0
+
+            # Check if a day has passed since last theme change
+            last_change_date = load_theme_change_date()
+            current_date = get_current_date(timezone_str)
+            day_changed = check_day_passed(last_change_date, current_date)
+            if day_changed:
+                print("New day detected - advancing to next theme")
+                current_index = (current_index + 1) % len(shuffle_list) if shuffle_list else 0
+                save_theme_change_date(current_date)
+
+            theme_path = shuffle_list[current_index]
+
+            # Save shuffle state
+            save_shuffle_list(shuffle_list, current_index, get_current_date(timezone_str))
+
+            print(f"Selected theme: {Path(theme_path).name}")
+
+        # Handle zip/ddw files
+        expanded_path = Path(theme_path).expanduser()
+        if expanded_path.is_file() and expanded_path.suffix in ['.zip', '.ddw']:
+            result = extract_theme(str(theme_path), cleanup=False)
+            theme_path = result['extract_dir']
+        else:
+            # Resolve to absolute path
+            theme_path = resolve_theme_path(theme_path)
+
+        # Get theme metadata to find where theme.json is located
+        theme_json_path = Path(theme_path) / "theme.json"
+        if not theme_json_path.exists():
+            for item in Path(theme_path).iterdir():
+                if item.is_dir() and (item / "theme.json").exists():
+                    theme_json_path = item / "theme.json"
+                    theme_path = str(item)
+                    break
+            else:
+                for item in Path(theme_path).rglob("theme.json"):
+                    theme_json_path = item
+                    theme_path = str(item.parent)
+                    break
+
+        # Get config path (use --config if provided, otherwise default)
+        if args.config:
+            config_path_obj = Path(args.config).expanduser().resolve()
+        else:
+            config_path_obj = DEFAULT_CONFIG_PATH
+
+        config = load_config(str(config_path_obj))
+
+        # Handle --time argument for specific time selection
+        if args.time:
+            try:
+                time_of_day = detect_time_of_day_for_time(args.time, str(config_path_obj))
+                print(f"Selecting image for time: {args.time} ({time_of_day})")
+                image_path = select_image_for_specific_time(args.time, theme_path, str(config_path_obj))
+                print(f"Changing wallpaper to: {Path(image_path).name}")
+                if change_wallpaper(image_path):
+                    print("Wallpaper changed successfully!")
+                    return 0
+                else:
+                    print("Failed to change wallpaper", file=sys.stderr)
+                    return 1
+            except Exception as e:
+                print(f"Error selecting image for specific time: {e}", file=sys.stderr)
+                return 1
+
+        # Always detect current time of day
+        timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
+        now = datetime.now(ZoneInfo(timezone))
+        time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+
+        # Monitor mode
+        if args.monitor:
+            print(f"Starting continuous monitoring mode...")
+            print(f"Theme: {Path(theme_path).name}")
+            print(f"Time-of-day intervals: {config['interval']} seconds each")
+            print("Press Ctrl+C to stop")
+            print("-" * 60)
+
+            last_image_path = None
+            last_time_of_day = None
+
+            while True:
+                try:
+                    time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+                    current_time_str = datetime.now(ZoneInfo(timezone)).strftime("%H:%M:%S")
+
+                    if time_of_day != last_time_of_day:
+                        print(f"\n[{current_time_str}] Time changed: {last_time_of_day} → {time_of_day}")
+                        last_time_of_day = time_of_day
+
+                        image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
+                        print(f"  → Changing wallpaper to: {Path(image_path).name}")
+
+                        if change_wallpaper(image_path):
+                            print(f"  ✓ Wallpaper updated successfully")
+                        else:
+                            print(f"  ✗ Failed to update wallpaper", file=sys.stderr)
+
+                        last_image_path = image_path
+
+                    else:
+                        if last_image_path:
+                            print(f"\r[{now}] {time_of_day} - {Path(last_image_path).name}", end="", flush=True)
+                        else:
+                            print(f"\r[{now}] {time_of_day} - loading...", end="", flush=True)
+
+                    time.sleep(config['interval'])
+
+                except KeyboardInterrupt:
+                    print("\n\nStopping monitoring mode...")
+                    break
+                except Exception as e:
+                    print(f"\nError in monitoring loop: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc()
+                    time.sleep(5)
+
+            return 0
+
+        # Single change mode - use time-based selection
+        print(f"Selecting image for current time: {time_of_day}")
+        now = datetime.now(ZoneInfo(timezone))
+        image_path = select_image_for_time_cli(theme_path, str(config_path_obj))
+        print(f"Changing wallpaper to: {image_path}")
+
+        if change_wallpaper(image_path):
+            print("Wallpaper changed successfully!")
+            return 0
+        else:
+            print("Failed to change wallpaper", file=sys.stderr)
+            return 1
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except (subprocess.CalledProcessError, IOError) as e:
+        print(f"Error changing wallpaper: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+# ============================================================================
+# CYCLE COMMAND
+# ============================================================================
+
+def run_cycle_command(args) -> int:
+    """Cycle to next image in current theme based on current time."""
+    try:
+        # Get current wallpaper path
+        current_wallpaper = get_current_wallpaper()
+
+        if not current_wallpaper:
+            print("Error: No current wallpaper found", file=sys.stderr)
+            return 1
+
+        current_wallpaper_path = Path(current_wallpaper)
+
+        # Extract theme name from the wallpaper path
+        theme_name = current_wallpaper_path.parent.name
+
+        theme_dir = DEFAULT_THEMES_DIR / theme_name
+
+        if not theme_dir.exists():
+            print(f"Error: Theme directory not found: {theme_dir}", file=sys.stderr)
+            return 1
+
+        # Get config path
+        if args.config:
+            config_path_obj = Path(args.config).expanduser().resolve()
+        else:
+            config_path_obj = DEFAULT_CONFIG_PATH
+
+        # Get current time
+        try:
+            config = load_config(str(config_path_obj))
+            timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
+            now = datetime.now(ZoneInfo(timezone))
+        except Exception:
+            now = datetime.now(ZoneInfo('UTC'))
+
+        # Select image for current time
+        image_path = select_image_for_time_cli(str(theme_dir), str(config_path_obj))
+        image_path_obj = Path(image_path)
+
+        if change_wallpaper(str(image_path_obj)):
+            print(f"Changed wallpaper to {image_path_obj.name}")
+            return 0
+        else:
+            print(f"Failed to change wallpaper to {image_path_obj.name}", file=sys.stderr)
+            return 1
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error cycling wallpaper: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+# ============================================================================
+# SHUFFLE LIST COMMAND
+# ============================================================================
+
+def run_shuffle_list_command(args) -> int:
+    """Print current shuffle list state."""
+    try:
+        from kwallpaper.shuffle_list_manager import load_shuffle_list, get_current_date
+
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
+
+        # Load shuffle list state
+        shuffle_state = load_shuffle_list()
+
+        shuffle_list = shuffle_state.get("shuffle_list", [])
+        current_index = shuffle_state.get("current_index", 0)
+        last_used_date = shuffle_state.get("last_used_date", "")
+
+        # Get current wallpaper to determine which theme is actually displayed
+        current_wallpaper = get_current_wallpaper()
+        current_theme_name = None
+        if current_wallpaper:
+            current_theme_name = Path(current_wallpaper).parent.name
+
+        # If --current flag is set, only show the current theme
+        if args.current:
+            if current_theme_name:
+                print(current_theme_name)
+            elif not shuffle_list:
+                print("No themes in shuffle list.")
+            elif current_index < len(shuffle_list):
+                current_theme = shuffle_list[current_index]
+                print(Path(current_theme).name)
+            else:
+                print("Shuffle list exhausted.")
+            return 0
+
+        print("Shuffle List State:")
+        print(f"  Last used date: {last_used_date}")
+        print(f"  Current index: {current_index}")
+        print(f"  Total themes: {len(shuffle_list)}")
+        print()
+
+        if current_theme_name:
+            print(f"  Current wallpaper theme: {current_theme_name}")
+
+        if not shuffle_list:
+            print("  No themes in shuffle list.")
+            print("  Run 'wallpaper_cli.py change' to generate a shuffle list.")
+            return 0
+
+        print("  Current shuffle order:")
+        for i, theme_path in enumerate(shuffle_list):
+            theme_name = Path(theme_path).name
+            marker = " >>" if i == current_index else ""
+            if theme_name == current_theme_name:
+                marker = " (current)"
+            print(f"    {i+1}. {theme_name}{marker}")
+
+        # Check if reshuffle is needed
+        current_date = get_current_date(timezone_str)
+        if last_used_date != current_date:
+            print()
+            print("  Note: Reshuffle needed (date changed)")
+
+        if current_index >= len(shuffle_list):
+            print()
+            print("  Note: Reshuffle needed (list exhausted)")
+
+        return 0
+
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+# ============================================================================
+# LIST / STATUS COMMANDS
+# ============================================================================
+
+def run_list_command(args) -> int:
+    """Handle list subcommand."""
+    try:
+        # Resolve theme path
+        theme_path = resolve_theme_path(args.theme_path)
+        theme_path_obj = Path(theme_path)
+
+        # Get config path (use --config if provided, otherwise default)
+        if args.config:
+            config_path_obj = Path(args.config).expanduser().resolve()
+        else:
+            config_path_obj = DEFAULT_CONFIG_PATH
+
+        config = load_config(str(config_path_obj))
+        timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
+
+        if args.time_of_day:
+            time_of_day = args.time_of_day
+            if not validate_time_of_day(time_of_day):
+                print(f"Invalid time-of-day category: {time_of_day}", file=sys.stderr)
+                print("Valid categories are: sunrise, day, sunset, night", file=sys.stderr)
+                return 1
+        else:
+            now = datetime.now(ZoneInfo(timezone))
+            time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+
+        # Get theme metadata to find image lists
+        theme_json_path = theme_path_obj / "theme.json"
+        if not theme_json_path.exists():
+            for item in theme_path_obj.iterdir():
+                if item.is_dir() and (item / "theme.json").exists():
+                    theme_json_path = item / "theme.json"
+                    theme_path = str(item)
+                    break
+            else:
+                for item in theme_path_obj.rglob("theme.json"):
+                    theme_json_path = item
+                    theme_path = str(item.parent)
+                    break
+
+        with open(theme_json_path, 'r') as f:
+            theme_data = json.load(f)
+
+        image_list = theme_data.get(f"{time_of_day}ImageList", [])
+        print(f"Images for {time_of_day}: {image_list}")
+
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except (IOError, json.JSONDecodeError) as e:
+        print(f"Error listing images: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_status_command(args) -> int:
+    """Handle status subcommand."""
+    try:
+        # Get config path
+        if args.config:
+            config_path_obj = Path(args.config).expanduser().resolve()
+        else:
+            config_path_obj = DEFAULT_CONFIG_PATH
+
+        config = load_config(str(config_path_obj))
+
+        wallpaper_path = get_current_wallpaper()
+
+        # Get time of day
+        timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
+        now = datetime.now(ZoneInfo(timezone))
+        time_of_day = detect_time_of_day_sun(str(config_path_obj), now=now)
+
+        # Print status
+        print(f"Current wallpaper:")
+        if wallpaper_path and Path(wallpaper_path).exists():
+            print(f"  Path: {wallpaper_path}")
+            print(f"  File: {Path(wallpaper_path).name}")
+        else:
+            print(f"  No wallpaper currently set")
+            print(f"  Tip: Run './wallpaper_cli.py change --theme-path <path>' to set a wallpaper")
+
+        print(f"\nCurrent time-of-day: {time_of_day}")
+        print(f"Image index: N/A (time-based selection now)")
+
+        return 0
+
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except (IOError, json.JSONDecodeError) as e:
+        print(f"Error checking status: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+# ============================================================================
+# THEMES MANAGEMENT COMMAND
+# ============================================================================
+
+def run_themes_command(args) -> int:
+    """Handle themes subcommand with subcommands (list, add, remove, reshuffle)."""
+    if not args.themes_command:
+        print("Error: No themes subcommand specified. Use 'list', 'add', 'remove', or 'reshuffle'.", file=sys.stderr)
+        return 1
+
+    try:
+        if args.themes_command == 'list':
+            return run_themes_list(args)
+        elif args.themes_command == 'add':
+            return run_themes_add(args)
+        elif args.themes_command == 'remove':
+            return run_themes_remove(args)
+        elif args.themes_command == 'reshuffle':
+            return run_themes_reshuffle(args)
+        else:
+            print(f"Error: Unknown themes subcommand: {args.themes_command}", file=sys.stderr)
+            return 1
+    except Exception as e:
+        print(f"Error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_themes_list(args) -> int:
+    """List all available themes in the themes directory."""
+    try:
+        themes = discover_themes()
+
+        if not themes:
+            print("No themes found in themes directory.")
+            return 0
+
+        print("Available themes:")
+        for theme_name, theme_path in themes:
+            print(f"  - {theme_name}: {theme_path}")
+
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except PermissionError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+
+
+def run_themes_add(args) -> int:
+    """Add a theme to the themes directory by extracting .ddw file."""
+    try:
+        from kwallpaper.themes import import_theme
+        meta = import_theme(args.source)
+        print(f"Added theme: {meta['extract_dir']}")
+        print(f"  Location: {meta['extract_dir']}")
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except FileExistsError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error adding theme: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+def run_themes_remove(args) -> int:
+    """Remove a theme from the themes directory."""
+    try:
+        from kwallpaper.themes import delete_theme
+        delete_theme(args.theme)
+        print(f"Removed theme: {args.theme}")
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error removing theme: {e}", file=sys.stderr)
+        return 1
+
+
+def run_themes_reshuffle(args) -> int:
+    """Manually reshuffle the theme list."""
+    try:
+        from kwallpaper.shuffle_list_manager import (
+            create_initial_shuffle,
+            save_shuffle_list,
+            get_current_date,
+        )
+
+        # Get timezone from config
+        config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
+        config = load_config(str(config_path))
+        timezone_str = config.get('location', {}).get('timezone', 'UTC')
+
+        themes = discover_themes()
+
+        if not themes:
+            print("Error: No themes found in themes directory", file=sys.stderr)
+            return 1
+
+        theme_paths = [path for _, path in themes]
+        shuffle_list = create_initial_shuffle(theme_paths)
+
+        save_shuffle_list(shuffle_list, 0, get_current_date(timezone_str))
+
+        print("Themes reshuffled successfully!")
+        print(f"Total themes: {len(shuffle_list)}")
+
+        return 0
+    except FileNotFoundError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 1
+    except Exception as e:
+        print(f"Error reshuffling themes: {e}", file=sys.stderr)
+        return 1
+
+
+# ============================================================================
+# MAIN
+# ============================================================================
+
+def main():
+    """Main CLI entry point."""
+    parser = argparse.ArgumentParser(
+        description="kWallpaper - Automatically change wallpapers based on time-of-day",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+Extract theme from .ddw file
+    wallpaper_cli.py extract --theme-path theme.ddw --cleanup
+
+Change wallpaper using daily shuffler (cycles through all themes)
+    wallpaper_cli.py change
+
+Change wallpaper to specific theme (by folder name)
+    wallpaper_cli.py change 24hr-Miami-1
+
+Change wallpaper to specific theme (by path)
+    wallpaper_cli.py change --theme-path theme.ddw
+
+Change wallpaper to specific image based on current time (same theme)
+    wallpaper_cli.py cycle
+
+Print current shuffle list state
+    wallpaper_cli.py shuffle-list
+
+List all available themes
+    wallpaper_cli.py themes list
+
+Add a new theme to the themes directory
+    wallpaper_cli.py themes add --source theme.ddw
+
+List images for a time-of-day category
+    wallpaper_cli.py list --theme-path extracted_theme --time-of-day day
+
+Monitor mode (continuous wallpaper changes)
+    wallpaper_cli.py change --monitor
+        """
+    )
+    subparsers = parser.add_subparsers(dest='command', help='Commands')
+
+    # Extract command
+    extract_parser = subparsers.add_parser('extract', help='Extract theme from .ddw file')
+    extract_parser.add_argument('--theme-path', required=True, help='Path to .ddw zip file')
+    extract_parser.add_argument('--cleanup', action='store_true', help='Remove temp directory after extraction')
+
+    # Change wallpaper command
+    change_parser = subparsers.add_parser('change', help='Change wallpaper to next image')
+    change_parser.add_argument('--theme-path', required=False, help='Theme folder name (e.g., "24hr-Miami-1") or path to .ddw/extracted theme (optional, uses daily shuffler if not provided)')
+    change_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
+    change_parser.add_argument('--monitor', action='store_true', help='Run continuously, cycling wallpapers based on time-of-day')
+    change_parser.add_argument('--time', help='Specific time to use for wallpaper selection (HH:MM format)')
+
+    # Cycle command - change to next image in current theme based on current time
+    cycle_parser = subparsers.add_parser('cycle', help='Cycle to next image in current theme based on current time')
+    cycle_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
+
+    # Shuffle list command - print current shuffle list state
+    shuffle_list_parser = subparsers.add_parser('shuffle-list', help='Print current shuffle list state')
+    shuffle_list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
+    shuffle_list_parser.add_argument('--current', action='store_true', help='Only show the current theme')
+
+    # List images command
+    list_parser = subparsers.add_parser('list', help='List available images in time-of-day category')
+    list_parser.add_argument('--theme-path', required=True, help='Path to extracted theme directory or theme name')
+    list_parser.add_argument('--time-of-day', help='Time-of-day category (day/sunset/sunrise/night)')
+    list_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
+
+    # Status command
+    status_parser = subparsers.add_parser('status', help='Check current wallpaper')
+    status_parser.add_argument('--config', help='Path to config file (default: ~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json)')
+
+    # Themes management command
+    themes_parser = subparsers.add_parser('themes', help='Manage themes')
+    themes_subparsers = themes_parser.add_subparsers(dest='themes_command', help='Theme management commands')
+
+    # themes list
+    themes_list_parser = themes_subparsers.add_parser('list', help='List all available themes')
+
+    # themes add
+    themes_add_parser = themes_subparsers.add_parser('add', help='Add a theme to the themes directory')
+    themes_add_parser.add_argument('--source', required=True, help='Path to source .ddw file')
+
+    # themes remove
+    themes_remove_parser = themes_subparsers.add_parser('remove', help='Remove a theme from the themes directory')
+    themes_remove_parser.add_argument('--theme', required=True, help='Theme filename to remove')
+
+    # themes reshuffle
+    themes_reshuffle_parser = themes_subparsers.add_parser('reshuffle', help='Manually reshuffle the theme list')
+
+    args = parser.parse_args()
+
+    # Route to appropriate handler
+    if args.command == 'extract':
+        return run_extract_command(args)
+    elif args.command == 'change':
+        return run_change_command(args)
+    elif args.command == 'list':
+        return run_list_command(args)
+    elif args.command == 'status':
+        return run_status_command(args)
+    elif args.command == 'cycle':
+        return run_cycle_command(args)
+    elif args.command == 'shuffle-list':
+        return run_shuffle_list_command(args)
+    elif args.command == 'themes':
+        return run_themes_command(args)
+    else:
+        parser.print_help()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

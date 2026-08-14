@@ -26,20 +26,26 @@ from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
 
-from kwallpaper.wallpaper_changer import (
+from kwallpaper.config import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_THEMES_DIR,
-    change_wallpaper,
+    load_config,
+    save_config,
+)
+from kwallpaper.suntime import (
     detect_time_of_day_for_time,
     detect_time_of_day_sun,
-    discover_themes,
-    extract_theme,
-    load_config,
-    resolve_theme_path,
-    save_config,
+)
+from kwallpaper.selection import (
     select_image_for_specific_time,
     select_image_for_time_cli,
 )
+from kwallpaper.themes import (
+    discover_themes,
+    extract_theme,
+    resolve_theme_path,
+)
+from kwallpaper.wallpaper import change_wallpaper
 from kwallpaper.shuffle_list_manager import (
     check_and_reshuffle,
     check_day_passed,
