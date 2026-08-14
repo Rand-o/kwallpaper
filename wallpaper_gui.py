@@ -1133,6 +1133,8 @@ class SchedulerPage(QWidget):
     def _init_scheduler(self):
         try:
             self.scheduler = create_scheduler(self._cfg)
+            # Wire scheduler task results into the GUI event log
+            self.scheduler.log_callback = self._append
         except Exception as e:
             logger.error(f"Scheduler init: {e}")
             self._append(f"Init error: {e}")
