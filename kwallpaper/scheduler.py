@@ -17,8 +17,8 @@ results are logged via ``logging`` and, when a callback is installed,
 delivered to the GUI event log (instead of print).
 """
 
+import io
 import logging
-import os
 import sys
 import threading
 from datetime import datetime
@@ -42,30 +42,51 @@ from kwallpaper.shuffle_list_manager import get_current_date
 logger = logging.getLogger(__name__)
 
 
-def _run_cli_quietly(func, args) -> int:
-    """Run a CLI command function with stdout/stderr captured.
+class _CaptureStream:
+    """In-memory replacement for sys.stdout/sys.stderr.
 
     The CLI functions communicate via ``print()``.  When the scheduler runs
-    them inside the GUI process, the process's stdout/stderr are often
+    them inside the GUI process, the process's real stdout/stderr are often
     closed (e.g. in the Flatpak sandbox) and every ``print`` raises
     ``BrokenPipeError`` — which surfaced as a "Cycle task error: [Errno 32]
     Broken pipe" log line on every run even though the wallpaper change
-    itself succeeded.  Replacing the streams with devnull avoids writing to
-    the (potentially broken) pipes.
+    itself succeeded.  Redirecting to an in-memory buffer avoids writing to
+    the (potentially broken) pipes, and keeps the CLI's error messages so
+    the scheduler can surface them in the GUI event log.
 
     Only ``sys.stdout`` / ``sys.stderr`` are swapped (never the underlying
     fd 1/2): the scheduler runs in a worker thread and the GUI's own
     logging may write to the real streams concurrently, so touching the
     fds would race with it.
     """
-    devnull = open(os.devnull, "w", buffering=1)
+
+    def __init__(self):
+        self.buf = io.StringIO()
+
+    def write(self, s):
+        self.buf.write(s)
+
+    def flush(self):
+        pass
+
+    def getvalue(self):
+        return self.buf.getvalue()
+
+
+def _run_cli_quietly(func, args) -> tuple:
+    """Run a CLI command function with stdout/stderr captured.
+
+    Returns ``(exit_code, captured_output)`` where ``captured_output`` is
+    the combined stdout+stderr text (stripped) produced by the command.
+    """
+    cap = _CaptureStream()
     old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = devnull, devnull
+    sys.stdout, sys.stderr = cap, cap
     try:
-        return func(args)
+        result = func(args)
     finally:
         sys.stdout, sys.stderr = old_out, old_err
-        devnull.close()
+    return result, cap.getvalue().strip()
 
 
 class SchedulerManager:
@@ -123,9 +144,10 @@ class SchedulerManager:
                 config = self.config_path
                 time = None
                 monitor = False
-            result = _run_cli_quietly(run_cycle_command, MockArgs())
+            result, output = _run_cli_quietly(run_cycle_command, MockArgs())
             if result != 0:
-                self.log(f"Cycle task failed with exit code {result}",
+                detail = f": {output}" if output else ""
+                self.log(f"Cycle task failed with exit code {result}{detail}",
                          logging.ERROR)
             else:
                 self.log("Cycle task completed", logging.DEBUG)
@@ -160,9 +182,10 @@ class SchedulerManager:
                 config = self.config_path
                 time = None
                 monitor = False
-            result = _run_cli_quietly(run_change_command, MockArgs())
+            result, output = _run_cli_quietly(run_change_command, MockArgs())
             if result != 0:
-                self.log(f"Change task failed with exit code {result}",
+                detail = f": {output}" if output else ""
+                self.log(f"Change task failed with exit code {result}{detail}",
                          logging.ERROR)
             else:
                 self._last_change_date = today

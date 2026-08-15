@@ -298,37 +298,44 @@ def run_change_command(args) -> int:
 def run_cycle_command(args) -> int:
     """Cycle to next image in current theme based on current time."""
     try:
-        # Get current wallpaper path
-        current_wallpaper = get_current_wallpaper()
-
-        if not current_wallpaper:
-            print("Error: No current wallpaper found", file=sys.stderr)
-            return 1
-
-        current_wallpaper_path = Path(current_wallpaper)
-
-        # Extract theme name from the wallpaper path
-        theme_name = current_wallpaper_path.parent.name
-
-        theme_dir = DEFAULT_THEMES_DIR / theme_name
-
-        if not theme_dir.exists():
-            print(f"Error: Theme directory not found: {theme_dir}", file=sys.stderr)
-            return 1
-
         # Get config path
         if args.config:
             config_path_obj = Path(args.config).expanduser().resolve()
         else:
             config_path_obj = DEFAULT_CONFIG_PATH
 
-        # Get current time
-        try:
-            config = load_config(str(config_path_obj))
-            timezone = config.get('location', {}).get('timezone', 'America/Phoenix')
-            now = datetime.now(ZoneInfo(timezone))
-        except Exception:
-            now = datetime.now(ZoneInfo('UTC'))
+        config = load_config(str(config_path_obj))
+
+        # Get current wallpaper path
+        current_wallpaper = get_current_wallpaper()
+
+        theme_dir = None
+
+        if current_wallpaper:
+            # Extract theme name from the wallpaper path
+            theme_name = Path(current_wallpaper).parent.name
+            candidate = DEFAULT_THEMES_DIR / theme_name
+            if candidate.exists():
+                theme_dir = candidate
+
+        # Fall back to the last-applied theme from config (covers the case
+        # where the wallpaper was changed outside kWallpaper, e.g. the user
+        # picked a solid colour or a random image in Plasma settings).
+        if theme_dir is None:
+            last_applied = config.get('theme', {}).get('last_applied', '')
+            if last_applied:
+                candidate = DEFAULT_THEMES_DIR / last_applied
+                if candidate.exists():
+                    theme_dir = candidate
+
+        if theme_dir is None:
+            print(
+                "Error: Could not determine current theme. No wallpaper found "
+                "via D-Bus and no valid last-applied theme in config. "
+                "Apply a theme from the GUI first.",
+                file=sys.stderr,
+            )
+            return 1
 
         # Select image for current time
         image_path = select_image_for_time_cli(str(theme_dir), str(config_path_obj))
