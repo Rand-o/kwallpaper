@@ -16,12 +16,51 @@
   ],
   "modules": [
     {
+      "name": "qt6",
+      "buildsystem": "cmake",
+      "config-opts": [
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DQT_QPA_PLATFORMS=wayland;xcb",
+        "-DQT_FEATURE_dbus=ON",
+        "-DQT_FEATURE_glib=ON",
+        "-DQT_LIBGL_ALWAYS_LINK=ON",
+        "-DQT_BUILD_EXAMPLES=OFF",
+        "-DQT_BUILD_TESTS=OFF",
+        "-DQT_BUILD_BENCHMARKS=OFF",
+        "-DQT_BUILD_DEMOS=OFF",
+        "-DQT_BUILD_DOCS=OFF",
+        "-DQT_BUILD_WEBENGINE=OFF",
+        "-DQT_BUILD_QTPDF=OFF",
+        "-DQT_NO_WEBENGINE=ON",
+        "-DQT_NO_QTPDF=ON",
+        "-DQT_NO_PDF=ON",
+        "-DSKIP_FEATURES=webengine,webenginewidgets,webenginequick,webenginequickwidgets,qtpdf"
+      ],
+      "sources": [
+        {
+          "type": "archive",
+          "url": "https://download.qt.io/archive/qt/6.10/6.10.2/single/qt-everywhere-src-6.10.2.tar.xz",
+          "sha256": "c3df0f0e421130cc52ed81cb712358804471ce9bd2a41d97828f9f5b1bf7fed2"
+        },
+        {
+          "type": "patch",
+          "path": "qt-no-pdf-deps.patch"
+        }
+      ],
+      "post-build-commands": []
+    },
+    {
       "name": "python-deps",
       "buildsystem": "simple",
       "build-commands": [
         "cp flatpak-deps/*.whl .",
         "mkdir -p /app/lib/python3.12/site-packages",
-        "pip3 install --no-index --find-links=. --target=/app/lib/python3.12/site-packages --upgrade tzlocal-5.3.1-py3-none-any.whl apscheduler-3.11.2-py3-none-any.whl astral-3.2-py3-none-any.whl pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl pyqt6_qt6-6.10.2-py3-none-manylinux_2_34_x86_64.whl pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl python_dateutil-2.9.0.post0-py2.py3-none-any.whl pytz-2025.2-py2.py3-none-any.whl six-1.17.0-py2.py3-none-any.whl"
+        "pip3 install --no-index --find-links=. --target=/app/lib/python3.12/site-packages --upgrade tzlocal-5.3.1-py3-none-any.whl apscheduler-3.11.2-py3-none-any.whl astral-3.2-py3-none-any.whl pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl pyqt6-6.10.2-cp39-abi3-manylinux_2_34_x86_64.whl python_dateutil-2.9.0.post0-py2.py3-none-any.whl pytz-2025.2-py2.py3-none-any.whl six-1.17.0-py2.py3-none-any.whl",
+        "rm -rf /app/lib/python3.12/site-packages/PyQt6/Qt6",
+        "mkdir -p /app/lib/python3.12/site-packages/PyQt6/Qt6",
+        "ln -s /app/lib /app/lib/python3.12/site-packages/PyQt6/Qt6/lib",
+        "ln -s /app/plugins /app/lib/python3.12/site-packages/PyQt6/Qt6/plugins",
+        "ln -s /app/include /app/lib/python3.12/site-packages/PyQt6/Qt6/include"
       ],
       "sources": [
         {
@@ -39,10 +78,6 @@
         {
           "type": "file",
           "path": "flatpak-deps/pyqt6_sip-13.11.0-cp312-cp312-manylinux1_x86_64.manylinux_2_5_x86_64.whl"
-        },
-        {
-          "type": "file",
-          "path": "flatpak-deps/pyqt6_qt6-6.10.2-py3-none-manylinux_2_34_x86_64.whl"
         },
         {
           "type": "file",
