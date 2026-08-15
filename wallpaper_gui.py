@@ -226,9 +226,11 @@ def get_tray_icon_for_theme(theme_mode: str) -> QIcon:
     the KDE light/dark theme.
     """
     mode = _effective_mode(theme_mode)
-    filename = {"light": "kWallpaper-light.png",
-                "dark": "kWallpaper-dark.png"}.get(mode,
-                                                   "kWallpaper-light.png")
+    # The filenames describe the icon's own colour: a *dark* icon is what
+    # you need on a *light* tray (and vice versa), so the mapping is flipped.
+    filename = {"light": "kWallpaper-dark.png",
+                "dark": "kWallpaper-light.png"}.get(mode,
+                                                    "kWallpaper-dark.png")
     p = _icon_path(filename)
     if p is None:
         # Fall back to the coloured icon, then the theme icon
