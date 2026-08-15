@@ -1,7 +1,7 @@
 # KDE Wallpaper Changer - Requirements
 
 # Core dependencies
-astral>=2.2
+astral>=2.2,<4.0
 
 # GUI and scheduling dependencies
 apscheduler>=3.10.0

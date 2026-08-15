@@ -149,6 +149,10 @@ def _real_sun_data(timezone_str: str, lat: float, lon: float,
                    date=None) -> Optional[Dict[str, Optional[datetime]]]:
     """Fetch dawn/sunrise/sunset/dusk from the real astral library.
 
+    Supports both astral 2.x (``astral.sun()`` returning a dict) and
+    astral 3.x (module-level ``astral.sun.sunrise()/dawn()/...``
+    functions).  Both use civil twilight (6° depression) for dawn/dusk.
+
     Returns a dict (values may be None) or None on any failure.
     """
     if not ASTRAL_AVAILABLE:
@@ -157,16 +161,28 @@ def _real_sun_data(timezone_str: str, lat: float, lon: float,
         astral = _astral_import()
         location = astral.LocationInfo("Default", "California", timezone_str,
                                        lat, lon)
-        s = astral.sun(location.observer,
-                       date=date or datetime.now().date(),
-                       tzinfo=location.timezone)
+        target_date = date or datetime.now().date()
+        tzinfo = location.timezone
+        if hasattr(astral, 'sun') and callable(astral.sun) and \
+                not isinstance(astral.sun, type):
+            # astral 2.x: astral.sun(observer, date=..., tzinfo=...)
+            s = astral.sun(location.observer, date=target_date, tzinfo=tzinfo)
+            return {
+                'dawn': s['dawn'],
+                'sunrise': s['sunrise'],
+                'sunset': s['sunset'],
+                'dusk': s['dusk'],
+            }
+        # astral 3.x: module-level functions in astral.sun
+        from astral import sun as _sun_mod
         return {
-            'dawn': s['dawn'],
-            'sunrise': s['sunrise'],
-            'sunset': s['sunset'],
-            'dusk': s['dusk'],
+            'dawn': _sun_mod.dawn(location.observer, date=target_date, tzinfo=tzinfo),
+            'sunrise': _sun_mod.sunrise(location.observer, date=target_date, tzinfo=tzinfo),
+            'sunset': _sun_mod.sunset(location.observer, date=target_date, tzinfo=tzinfo),
+            'dusk': _sun_mod.dusk(location.observer, date=target_date, tzinfo=tzinfo),
         }
     except Exception:
+        logger.debug("_real_sun_data failed", exc_info=True)
         return None
 
 

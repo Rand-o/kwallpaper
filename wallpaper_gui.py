@@ -1104,7 +1104,13 @@ class SettingsPage(QWidget):
                 scheme_map.get(self.scheme.currentIndex(), "system")
             c["application"].setdefault("autostart", self.autostart.isChecked())
             save_config(self._cfg, c)
-            
+
+            # If the scheduler is running, apply the new cycle interval
+            # immediately instead of waiting for a restart.
+            w = self.window()
+            if hasattr(w, "sched") and w.sched.is_running():
+                w.sched.scheduler.reload_cycle_interval()
+
             autostart_dir = Path.home() / ".config" / "autostart"
             autostart_file = autostart_dir / "org.kde.kwallpaper.desktop"
             if self.autostart.isChecked():

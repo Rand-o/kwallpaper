@@ -25,10 +25,10 @@ def cfg(tmp_path):
     p = tmp_path / "config.json"
     p.write_text("""{
   "location": {"latitude": 35.0, "longitude": -112.0, "timezone": "UTC"},
-  "interval": 1,
+  "interval": 5400,
   "retry_attempts": 3,
   "retry_delay": 5,
-  "scheduling": {"daily_shuffle_enabled": true, "run_cycle": true}
+  "scheduling": {"interval": 1, "daily_shuffle_enabled": true, "run_cycle": true}
 }""")
     return str(p)
 

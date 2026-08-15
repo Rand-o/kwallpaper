@@ -117,8 +117,11 @@ class SchedulerManager:
             config = load_config(self.config_path)
             scheduling = config.get('scheduling', {})
             location = config.get('location', {})
+            # The cycle interval is ``scheduling.interval`` (what the GUI
+            # Settings tab edits).  The top-level ``interval`` is a legacy
+            # field used only by the CLI ``--monitor`` loop.
             return {
-                'interval': config.get('interval', 60),
+                'interval': scheduling.get('interval', 60),
                 'daily_shuffle_enabled': scheduling.get('daily_shuffle_enabled', True),
                 'run_cycle': scheduling.get('run_cycle', True),
                 'timezone': location.get('timezone', 'UTC'),
@@ -269,6 +272,31 @@ class SchedulerManager:
         except Exception as e:
             logger.error(f"Failed to stop scheduler: {e}", exc_info=True)
             self._is_running = False
+            return False
+
+    def reload_cycle_interval(self) -> bool:
+        """Re-read ``scheduling.interval`` from config and reschedule the
+        cycle task, so interval changes made in the GUI Settings tab take
+        effect without a full scheduler restart."""
+        if not self._is_running or self.scheduler is None:
+            return False
+        try:
+            config = self._get_config()
+            interval = config.get('interval', 60)
+            if 'cycle' in self._tasks:
+                self.scheduler.add_job(
+                    self._run_cycle_task,
+                    trigger=IntervalTrigger(seconds=interval),
+                    id='cycle_task',
+                    name='Cycle Wallpaper Task',
+                    replace_existing=True,
+                )
+                self._tasks['cycle'] = {
+                    'interval': interval, 'type': 'interval'}
+                self.log(f"Cycle task interval updated: every {interval} seconds")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reload cycle interval: {e}", exc_info=True)
             return False
 
     def add_job(self, name: str, func: Callable, trigger: Any) -> bool:

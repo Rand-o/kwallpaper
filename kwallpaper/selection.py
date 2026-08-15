@@ -331,14 +331,10 @@ def select_image_for_time(theme_data: Dict[str, Any], now: datetime,
                 else:
                     now = now.astimezone(_datetime_timezone.utc)
             else:
-                # Use real Astral library
-                from kwallpaper.suntime import _astral_import
-                astral = _astral_import()
-                location = astral.LocationInfo("Test", "Test", "UTC",
-                                               33.4484, -112.074)
-                s = astral.sun(location.observer, date=now.date())
-                sun = {'dawn': s['dawn'], 'sunrise': s['sunrise'],
-                       'sunset': s['sunset'], 'dusk': s['dusk']}
+                # Use real Astral library (shared v2/v3-compatible helper)
+                from kwallpaper.suntime import _real_sun_data
+                sun = _real_sun_data("UTC", 33.4484, -112.074,
+                                     date=now.date())
                 if now.tzinfo is None:
                     now = now.replace(tzinfo=_datetime_timezone.utc)
                 else:
