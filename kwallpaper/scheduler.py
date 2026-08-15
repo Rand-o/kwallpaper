@@ -18,6 +18,8 @@ delivered to the GUI event log (instead of print).
 """
 
 import logging
+import os
+import sys
 import threading
 from datetime import datetime
 from typing import Optional, Callable, Any
@@ -38,6 +40,32 @@ from kwallpaper.cli import run_change_command, run_cycle_command
 from kwallpaper.shuffle_list_manager import get_current_date
 
 logger = logging.getLogger(__name__)
+
+
+def _run_cli_quietly(func, args) -> int:
+    """Run a CLI command function with stdout/stderr captured.
+
+    The CLI functions communicate via ``print()``.  When the scheduler runs
+    them inside the GUI process, the process's stdout/stderr are often
+    closed (e.g. in the Flatpak sandbox) and every ``print`` raises
+    ``BrokenPipeError`` — which surfaced as a "Cycle task error: [Errno 32]
+    Broken pipe" log line on every run even though the wallpaper change
+    itself succeeded.  Replacing the streams with devnull avoids writing to
+    the (potentially broken) pipes.
+
+    Only ``sys.stdout`` / ``sys.stderr`` are swapped (never the underlying
+    fd 1/2): the scheduler runs in a worker thread and the GUI's own
+    logging may write to the real streams concurrently, so touching the
+    fds would race with it.
+    """
+    devnull = open(os.devnull, "w", buffering=1)
+    old_out, old_err = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = devnull, devnull
+    try:
+        return func(args)
+    finally:
+        sys.stdout, sys.stderr = old_out, old_err
+        devnull.close()
 
 
 class SchedulerManager:
@@ -95,7 +123,7 @@ class SchedulerManager:
                 config = self.config_path
                 time = None
                 monitor = False
-            result = run_cycle_command(MockArgs())
+            result = _run_cli_quietly(run_cycle_command, MockArgs())
             if result != 0:
                 self.log(f"Cycle task failed with exit code {result}",
                          logging.ERROR)
@@ -132,7 +160,7 @@ class SchedulerManager:
                 config = self.config_path
                 time = None
                 monitor = False
-            result = run_change_command(MockArgs())
+            result = _run_cli_quietly(run_change_command, MockArgs())
             if result != 0:
                 self.log(f"Change task failed with exit code {result}",
                          logging.ERROR)

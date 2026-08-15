@@ -35,7 +35,8 @@ try:
         QObject,
     )
     from PyQt6.QtGui import (
-        QPixmap, QColor, QPainter, QPen, QIcon, QPalette, QFontDatabase,
+        QPixmap, QImage, QColor, QPainter, QPen, QIcon, QPalette,
+        QFontDatabase,
     )
     PYQT6_AVAILABLE = True
 except ImportError:
@@ -193,39 +194,71 @@ def get_icon_for_theme(theme_mode: str) -> QIcon:
 # ═════════════════════════════════════════════════════════════════════════════
 
 class _PixmapLoader(QRunnable):
-    """Loads a QPixmap off the GUI thread and emits it when ready."""
+    """Loads an image off the GUI thread and emits it when ready.
 
-    def __init__(self, path: str, sig: QObject):
+    Emits a QImage (not a QPixmap): QImage is implicitly shared (copy-on-
+    write), so the queued-signal copy on the GUI thread keeps the pixel data
+    alive even after the worker thread's local reference is released.  A
+    QPixmap emitted across threads is a value-copy that can be destroyed on
+    the worker thread (thread reuse after run() returns) while the GUI
+    thread is still reading it -> use-after-free SEGV in libQt6Gui.
+
+    Cancellable: if the caller bumps ``token.version`` (e.g. the user
+    switched themes) the worker skips its emit so the stale image never
+    reaches the GUI thread's state.
+    """
+
+    def __init__(self, path: str, sig: QObject, token=None):
         super().__init__()
         self.setAutoDelete(True)
         self._path = path
         self._sig = sig
+        self._token = token
 
     def run(self):
-        pm = QPixmap(self._path)
-        if pm.isNull():
-            pm = QPixmap()
-        self._sig.pixmap_loaded.emit(self._path, pm)
+        v = self._token.version if self._token else 0
+        img = QImage(self._path)
+        if img.isNull():
+            img = QImage()
+        if self._token is not None and self._token.version != v:
+            return  # superseded; don't emit stale image to GUI thread
+        # .copy() gives the image its own pixel buffer before it crosses the
+        # thread boundary.  QImage is implicitly shared (COW): the emit
+        # increments the refcount, and the worker thread's local `img`
+        # reference is dropped when run() returns.  Without a private copy
+        # the shared-data lifetime across the queued handoff is fragile and
+        # can result in a use-after-free SEGV in libQt6Gui on the GUI
+        # thread (observed as an ABRT coredump when the preview starts).
+        self._sig.image_loaded.emit(self._path, img.copy())
 
 
 class _ThumbnailWorker(QRunnable):
-    """Generates a small JPEG thumbnail off the GUI thread."""
+    """Generates a preview JPEG thumbnail off the GUI thread.
 
-    def __init__(self, path: str, sig: QObject):
+    Cancellable: if the caller bumps ``token.version`` (e.g. the user
+    switched themes) the worker skips its work and emits nothing.
+    """
+
+    def __init__(self, path: str, sig: QObject, token=None):
         super().__init__()
         self.setAutoDelete(True)
         self._path = path
         self._sig = sig
+        self._token = token
 
     def run(self):
+        v = self._token.version if self._token else 0
         from kwallpaper.wallpaper_changer import ensure_thumbnail
-        self._sig.thumb_ready.emit(self._path, ensure_thumbnail(self._path))
+        thumb = ensure_thumbnail(self._path)
+        if self._token is not None and self._token.version != v:
+            return  # superseded; don't touch GUI state
+        self._sig.thumb_ready.emit(self._path, thumb)
 
 
 class _LoadSignals(QObject):
     """Signal emitter shared by background workers (lives on the GUI thread)."""
 
-    pixmap_loaded = pyqtSignal(str, QPixmap)
+    image_loaded = pyqtSignal(str, QImage)  # (path, image) - safe cross-thread
     thumb_ready = pyqtSignal(str, str)  # (source path, thumbnail path)
     op_finished = pyqtSignal(str, bool, str)  # (op name, success, message)
 
@@ -254,15 +287,33 @@ class _OpWorker(QRunnable):
         self._sig.op_finished.emit(self._op, success, message)
 
 
+class _LoadToken:
+    """Monotonic generation counter used to cancel superseded loads."""
+
+    __slots__ = ("version",)
+
+    def __init__(self):
+        self.version = 0
+
+
 class ImageCrossFadeWidget(QWidget):
     """Cross-fade preview widget.
 
     All image decoding and scaling happens in background worker threads.
-    The widget only ever renders ~512px thumbnails (never full-res files),
-    pre-scaled once to widget size, and paintEvent is pure drawPixmap.
+    The widget only ever renders ~1080p preview thumbnails (never full-res
+    files), pre-scaled once to widget size, and paintEvent is pure
+    drawPixmap.
+
+    Loading is demand-driven: only the current image plus the next couple
+    are loaded eagerly; the rest are preloaded lazily as the slideshow
+    advances, and switching themes cancels all in-flight work.
+
+    The raw-pixmap cache is bounded by a decoded-byte budget (not a count),
+    so memory use stays flat regardless of preview resolution.
     """
 
-    _MAX_CACHE = 32   # LRU cap for raw (thumbnail) pixmaps
+    _MAX_CACHE_BYTES = 256 * 1024 * 1024  # 256 MB decoded-pixmap budget
+    _EAGER_AHEAD = 2                      # images loaded ahead of current
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -271,12 +322,15 @@ class ImageCrossFadeWidget(QWidget):
         self._idx: int = 0
         self._thumb_paths: dict[int, str] = {}   # image idx -> thumb path
         self._raw_cache: dict[str, QPixmap] = {} # thumb path -> pixmap (LRU)
+        self._raw_bytes: int = 0                 # decoded bytes in _raw_cache
         self._scaled: dict[int, QPixmap] = {}    # image idx -> scaled pixmap
         self._loading: set[str] = set()          # thumb paths in flight
+        self._token = _LoadToken()               # bump to cancel in-flight
 
         self._pool = QThreadPool(self)
+        self._pool.setMaxThreadCount(4)  # bounded decode concurrency
         self._signals = _LoadSignals(self)
-        self._signals.pixmap_loaded.connect(self._on_pixmap_loaded)
+        self._signals.image_loaded.connect(self._on_image_loaded)
         self._signals.thumb_ready.connect(self._on_thumb_ready)
 
         self.setAutoFillBackground(True)
@@ -307,20 +361,29 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- public API ------------------------------------------------------------
     def set_images(self, paths: list[str]):
-        """Switch to a new image list. Cheap: stores the list and kicks off
-        background thumbnail + pixmap loading; the first frame appears as
-        soon as the first background load finishes."""
+        """Switch to a new image list. Cheap: stores the list and loads only
+        the current image plus a couple ahead; the rest are preloaded
+        lazily as the slideshow advances.  All in-flight loads from the
+        previous list are cancelled via the load token."""
         self._timer.stop()
         self._anim.stop()
+        self._token.version += 1  # cancel in-flight loads from old list
         self._images = list(paths)
         self._idx = 0
         self._blend = 0.0
         self._thumb_paths = {}
         self._scaled = {}
         self._loading = set()
-        for i, p in enumerate(self._images):
-            self._request(i)
+        self._request_eager()
         self.update()
+
+    def _request_eager(self):
+        """Request the current image plus the next _EAGER_AHEAD images."""
+        n = len(self._images)
+        if n == 0:
+            return
+        for off in range(self._EAGER_AHEAD + 1):
+            self._request((self._idx + off) % n)
 
     def start(self):
         if len(self._images) > 1:
@@ -338,7 +401,7 @@ class ImageCrossFadeWidget(QWidget):
         path = self._images[idx]
         if idx in self._thumb_paths or idx in self._scaled:
             return
-        self._pool.start(_ThumbnailWorker(path, self._signals))
+        self._pool.start(_ThumbnailWorker(path, self._signals, self._token))
 
     def _on_thumb_ready(self, src: str, thumb: str):
         idx = self._images.index(src) if src in self._images else None
@@ -346,27 +409,45 @@ class ImageCrossFadeWidget(QWidget):
             return
         self._thumb_paths[idx] = thumb
         if thumb in self._raw_cache:
-            self._on_pixmap_loaded(thumb, self._raw_cache[thumb])
+            self._on_image_loaded(thumb, self._raw_cache[thumb].toImage())
             return
         if thumb in self._loading:
             return
         self._loading.add(thumb)
-        self._pool.start(_PixmapLoader(thumb, self._signals))
+        self._pool.start(_PixmapLoader(thumb, self._signals, self._token))
 
-    def _on_pixmap_loaded(self, thumb: str, pm: QPixmap):
+    def _on_image_loaded(self, thumb: str, img: QImage):
         self._loading.discard(thumb)
-        if pm.isNull():
+        if img.isNull():
             return
-        # LRU insert: move to end, evict oldest beyond the cap
-        self._raw_cache.pop(thumb, None)
+        # Convert to QPixmap on the GUI thread: the QPixmap must only ever
+        # be created and used on the thread that paints with it.
+        pm = QPixmap.fromImage(img)
+        # Guard against stale results: if the image list changed while this
+        # image was loading, the thumb path no longer maps to a valid index.
+        if thumb not in self._thumb_paths.values():
+            return
+        # LRU insert: move to end, evict oldest beyond the byte budget
+        old = self._raw_cache.pop(thumb, None)
+        if old is not None:
+            self._raw_bytes -= self._pixmap_bytes(old)
         self._raw_cache[thumb] = pm
-        while len(self._raw_cache) > self._MAX_CACHE:
-            self._raw_cache.pop(next(iter(self._raw_cache)))
+        self._raw_bytes += self._pixmap_bytes(pm)
+        while (self._raw_bytes > self._MAX_CACHE_BYTES
+               and len(self._raw_cache) > 1):
+            oldest = next(iter(self._raw_cache))
+            self._raw_bytes -= self._pixmap_bytes(self._raw_cache[oldest])
+            self._raw_cache.pop(oldest)
         # Scale once to current widget size for every image using this thumb
         for idx, t in self._thumb_paths.items():
             if t == thumb and idx not in self._scaled:
                 self._scaled[idx] = self._scale_to_widget(pm)
         self.update()
+
+    @staticmethod
+    def _pixmap_bytes(pm: QPixmap) -> int:
+        """Decoded byte size of a pixmap (width * height * bytesPerPixel)."""
+        return pm.width() * pm.height() * (pm.depth() // 8)
 
     def _scale_to_widget(self, pm: QPixmap) -> QPixmap:
         sz = self.size()
@@ -376,15 +457,37 @@ class ImageCrossFadeWidget(QWidget):
                          Qt.TransformationMode.SmoothTransformation)
 
     # -- internals -------------------------------------------------------------
+    def _scaled_for(self, idx: int):
+        """Return the scaled pixmap for idx, scaling the cached raw pixmap on
+        demand if its thumb was never registered (lazy-load race)."""
+        pm = self._scaled.get(idx)
+        if pm is not None:
+            return pm
+        t = self._thumb_paths.get(idx)
+        if t is not None and t in self._raw_cache:
+            pm = self._scaled[idx] = self._scale_to_widget(self._raw_cache[t])
+        return pm
+
     def _advance(self):
         if len(self._images) < 2:
             return
         nxt = (self._idx + 1) % len(self._images)
+        # Make sure the fade target is in the pipeline (its raw pixmap may
+        # have been cached earlier without its thumb ever being registered).
         self._request(nxt)
-        self._anim.stop()
-        self._anim.setStartValue(0.0)
-        self._anim.setEndValue(1.0)
-        self._anim.start()
+        self._request_eager()  # keep current + next couple warm
+        # Seamless transition: only fade when the next frame is already
+        # decoded; otherwise swap instantly.  Fading while the target is
+        # still loading would fade to an empty (black) background.
+        if self._scaled_for(nxt) is not None:
+            self._anim.stop()
+            self._anim.setStartValue(0.0)
+            self._anim.setEndValue(1.0)
+            self._anim.start()
+        else:
+            self._idx = nxt
+            self._blend = 0.0
+            self.update()
 
     def _on_fade_done(self):
         self._idx = (self._idx + 1) % len(self._images)
@@ -419,7 +522,7 @@ class ImageCrossFadeWidget(QWidget):
             painter.end()
             return
 
-        cur = self._scaled.get(self._idx)
+        cur = self._scaled_for(self._idx)
         if cur is None:
             # Fast placeholder until the first background load arrives
             painter.fillRect(self.rect(),
@@ -1443,6 +1546,19 @@ class WallpaperChangerWindow(QMainWindow):
         QApplication.quit()
 
     def _cleanup(self):
+        # Stop the slideshow timers first.  A worker blocked in the
+        # thumbnailer (e.g. on a slow filesystem) would otherwise keep the
+        # QThreadPool destructor's waitForDone() spinning indefinitely and
+        # freeze the window on close/quit.
+        self.themes.preview.stop()
+        self.themes.preview._pool.clear()
+        self.themes._pool.clear()
+        # Drain whatever is still running, but only briefly: the pools are
+        # parented to the widgets, so their destructors (at app exit) also
+        # wait for done — we just don't want to block the UI on a stuck
+        # worker for long.
+        self.themes.preview._pool.waitForDone(1000)
+        self.themes._pool.waitForDone(1000)
         if self.sched.is_running():
             self.sched.scheduler.stop(wait=True)
 
