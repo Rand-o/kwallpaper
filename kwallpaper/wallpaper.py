@@ -138,23 +138,43 @@ def change_wallpaper(image_path: str) -> bool:
 def get_current_wallpaper() -> Optional[str]:
     """Get current KDE Plasma wallpaper path.
 
+    Tries the D-Bus ``wallpaper`` method first (works in Flatpak where
+    ``kreadconfig5`` is absent), then falls back to ``kreadconfig6`` / ``kreadconfig5``.
+
     Returns:
         Path to current wallpaper, or None if not found
     """
+    # Primary: D-Bus wallpaper method (screen 0)
     try:
-        result = subprocess.run([
-            'kreadconfig5',
-            '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
-            '--group', 'Wallpaper',
-            '--group', 'org.kde.image',
-            '--key', 'Image'
-        ], capture_output=True, text=True, check=True)
-
-        wallpaper_path = result.stdout.strip()
-        if wallpaper_path:
-            return wallpaper_path
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        # Plasma not running or config not found
+        result = _gdbus('org.kde.PlasmaShell.wallpaper', '0', timeout=5)
+        if result.returncode == 0:
+            # Output looks like: ({'Image': <'file:///path/to/img.jpg'>, ...},)
+            match = re.search(r"'Image':\s*<'(file://[^']+)'>", result.stdout)
+            if not match:
+                match = re.search(r'"Image":\s*<(file://[^>]+)>', result.stdout)
+            if match:
+                uri = match.group(1)
+                if uri.startswith('file://'):
+                    return uri[len('file://'):]
+                return uri
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
+
+    # Fallback: kreadconfig6 / kreadconfig5
+    for tool in ('kreadconfig6', 'kreadconfig5'):
+        try:
+            result = subprocess.run([
+                tool,
+                '--file', 'plasma-org.kde.plasma.desktop-appletsrc',
+                '--group', 'Wallpaper',
+                '--group', 'org.kde.image',
+                '--key', 'Image'
+            ], capture_output=True, text=True, check=True, timeout=5)
+            wallpaper_path = result.stdout.strip()
+            if wallpaper_path:
+                return wallpaper_path
+        except (subprocess.CalledProcessError, FileNotFoundError,
+                subprocess.TimeoutExpired, OSError):
+            continue
 
     return None

@@ -313,12 +313,18 @@ def delete_theme(path: str) -> bool:
 # THUMBNAILS
 # ============================================================================
 
-def ensure_thumbnail(image_path: str, thumb_size: int = 512) -> str:
-    """Generate (or reuse) a small JPEG thumbnail for an image.
+def ensure_thumbnail(image_path: str, thumb_size: int = 1080) -> str:
+    """Generate (or reuse) a JPEG preview thumbnail for an image.
 
     Thumbnails are cached under DEFAULT_CACHE_DIR / "thumbs" / <theme folder
     name> / as <original stem>.thumb.jpg.  A cached thumbnail is reused only
-    while it is at least as new as the source image.
+    while it is at least as new as the source image AND at least as large as
+    the requested size (so bumping the preview resolution invalidates old
+    low-res caches).
+
+    Decoding uses QImageReader.setDecodedSize(): the JPEG decoder downscales
+    during the inverse transform (full-resolution sampling quality at a
+    fraction of the RAM/decode cost of full-res decode + CPU rescale).
 
     The heavy decode happens here, so callers should run this in a background
     thread.  Returns the thumbnail path, or the original path if thumbnailing
@@ -333,19 +339,27 @@ def ensure_thumbnail(image_path: str, thumb_size: int = 512) -> str:
         thumb_path = thumb_dir / (src.stem + ".thumb.jpg")
 
         if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
-            return str(thumb_path)
+            cached = QImage(str(thumb_path))
+            if not cached.isNull() and max(cached.width(), cached.height()) >= thumb_size:
+                return str(thumb_path)
 
         reader = QImageReader(str(src))
         if not reader.canRead():
             return str(src)
+        src_size = reader.size()
+        if src_size.width() <= 0 or src_size.height() <= 0:
+            return str(src)
+        # Decode directly at target size: full-res sampling quality, no
+        # full-res buffer ever materializes (libjpeg IDCT downscaling).
+        if src_size.width() > thumb_size or src_size.height() > thumb_size:
+            reader.setScaledSize(
+                src_size.scaled(thumb_size, thumb_size,
+                                Qt.AspectRatioMode.KeepAspectRatio))
         img = reader.read()
         if img.isNull():
             return str(src)
-        scaled = img.scaled(thumb_size, thumb_size,
-                            Qt.AspectRatioMode.KeepAspectRatio,
-                            Qt.TransformationMode.SmoothTransformation)
         tmp_path = thumb_dir / (src.stem + ".thumb.jpg.tmp")
-        if scaled.save(str(tmp_path), "JPG", 85):
+        if img.save(str(tmp_path), "JPG", 85):
             tmp_path.replace(thumb_path)
         else:
             if tmp_path.exists():
