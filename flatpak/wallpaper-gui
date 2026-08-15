@@ -1,3 +1,0 @@
-#!/bin/bash
-export PYTHONPATH="/app/lib/python3:$PYTHONPATH"
-exec python3 /app/lib/python3/wallpaper_gui.py "$@"
