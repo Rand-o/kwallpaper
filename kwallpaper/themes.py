@@ -313,7 +313,8 @@ def delete_theme(path: str) -> bool:
 # THUMBNAILS
 # ============================================================================
 
-def ensure_thumbnail(image_path: str, thumb_size: int = 1080) -> str:
+def ensure_thumbnail(image_path: str, thumb_size: int = 1080,
+                     token=None) -> str:
     """Generate (or reuse) a JPEG preview thumbnail for an image.
 
     Thumbnails are cached under DEFAULT_CACHE_DIR / "thumbs" / <theme folder
@@ -329,7 +330,16 @@ def ensure_thumbnail(image_path: str, thumb_size: int = 1080) -> str:
     The heavy decode happens here, so callers should run this in a background
     thread.  Returns the thumbnail path, or the original path if thumbnailing
     fails (the caller can then fall back to loading the original).
+
+    ``token`` is an optional object with a ``version`` attribute (see the
+    GUI's ``_LoadToken``).  When provided, the decode and the JPEG write are
+    aborted if ``token.version`` changes mid-flight (the user switched
+    themes), so abandoned workers stop wasting CPU and disk.
     """
+    def _cancelled() -> bool:
+        return token is not None and token.version != _start_version
+
+    _start_version = token.version if token is not None else 0
     try:
         from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QImage, QImageReader
@@ -338,9 +348,26 @@ def ensure_thumbnail(image_path: str, thumb_size: int = 1080) -> str:
         thumb_dir.mkdir(parents=True, exist_ok=True)
         thumb_path = thumb_dir / (src.stem + ".thumb.jpg")
 
+        if _cancelled():
+            return str(src)
+        # Reuse a cached thumbnail while it is at least as new as the source
+        # AND at least as large as the requested size.  Check the size from
+        # the file header (cheap) rather than decoding the whole JPEG just to
+        # test isNull() — decoding a 1080p thumbnail on the hot path is the
+        # kind of waste this function exists to avoid, and a failed decode
+        # must fall through to a re-encode, not silently return the original
+        # full-res path (which would make the preview load full-res files).
         if thumb_path.exists() and thumb_path.stat().st_mtime >= src.stat().st_mtime:
-            cached = QImage(str(thumb_path))
-            if not cached.isNull() and max(cached.width(), cached.height()) >= thumb_size:
+            # Check the size from the file header (cheap) rather than
+            # decoding the whole JPEG.  QImageReader.size() returns 0x0 for
+            # an unreadable file, so a corrupt/empty cache entry falls
+            # through to a re-encode.  (QImageReader has no isNull() in
+            # PyQt6 — calling it raised AttributeError, which the outer
+            # except swallowed, making every cache lookup fail.)
+            reader = QImageReader(str(thumb_path))
+            sz = reader.size()
+            if (sz.width() > 0 and sz.height() > 0
+                    and max(sz.width(), sz.height()) >= thumb_size):
                 return str(thumb_path)
 
         reader = QImageReader(str(src))
@@ -358,8 +385,15 @@ def ensure_thumbnail(image_path: str, thumb_size: int = 1080) -> str:
         img = reader.read()
         if img.isNull():
             return str(src)
+        if _cancelled():
+            # Theme switched mid-decode: drop the buffer, don't write.
+            return str(src)
         tmp_path = thumb_dir / (src.stem + ".thumb.jpg.tmp")
         if img.save(str(tmp_path), "JPG", 85):
+            if _cancelled():
+                # Switched while saving: remove the orphaned tmp file.
+                tmp_path.unlink(missing_ok=True)
+                return str(src)
             tmp_path.replace(thumb_path)
         else:
             if tmp_path.exists():

@@ -54,11 +54,14 @@ class _CaptureStream:
     the (potentially broken) pipes, and keeps the CLI's error messages so
     the scheduler can surface them in the GUI event log.
 
-    Only ``sys.stdout`` / ``sys.stderr`` are swapped (never the underlying
-    fd 1/2): the scheduler runs in a worker thread and the GUI's own
-    logging may write to the real streams concurrently, so touching the
-    fds would race with it.
+    ``sys.stdout``/``sys.stderr`` are process-global, so swapping them is a
+    race if two scheduler tasks ever run concurrently.  They never do (the
+    manager's re-entrant lock serialises cycle/change), but the swap is
+    still guarded by a dedicated lock so a future concurrent task can't
+    interleave its prints with the GUI thread's logging.
     """
+
+    _swap_lock = threading.Lock()
 
     def __init__(self):
         self.buf = io.StringIO()
@@ -80,12 +83,13 @@ def _run_cli_quietly(func, args) -> tuple:
     the combined stdout+stderr text (stripped) produced by the command.
     """
     cap = _CaptureStream()
-    old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = cap, cap
-    try:
-        result = func(args)
-    finally:
-        sys.stdout, sys.stderr = old_out, old_err
+    with _CaptureStream._swap_lock:
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = cap, cap
+        try:
+            result = func(args)
+        finally:
+            sys.stdout, sys.stderr = old_out, old_err
     return result, cap.getvalue().strip()
 
 
@@ -211,7 +215,13 @@ class SchedulerManager:
 
         try:
             config = self._get_config()
-            self.scheduler = BackgroundScheduler(daemon=True)
+            # Reuse the existing scheduler instance when possible: creating
+            # a fresh BackgroundScheduler on every start leaked its thread
+            # pool on each start/stop cycle (the exact pattern the user
+            # hammers in the GUI).  A shut-down APScheduler instance can be
+            # restarted, so we only build a new one when we have none.
+            if self.scheduler is None:
+                self.scheduler = BackgroundScheduler(daemon=True)
 
             interval = config.get('interval', 60)
             if config.get('run_cycle', True):
@@ -257,7 +267,15 @@ class SchedulerManager:
             self._is_running = False
             return False
 
-    def stop(self, wait: bool = True) -> bool:
+    def stop(self, wait: bool = False) -> bool:
+        """Stop the scheduler.
+
+        ``wait`` defaults to False: the GUI calls stop() from the main
+        thread, and waiting for a in-flight cycle task (which shells out to
+        gdbus for several seconds per screen) would freeze the UI.  The
+        task thread is a daemon and the re-entrant lock guarantees no
+        overlap with the next start.
+        """
         if not self._is_running:
             logger.warning("Scheduler is not running")
             return True
@@ -265,7 +283,6 @@ class SchedulerManager:
         try:
             if self.scheduler is not None:
                 self.scheduler.shutdown(wait=wait)
-                self.scheduler = None
             self._is_running = False
             self.log("Scheduler stopped successfully")
             return True

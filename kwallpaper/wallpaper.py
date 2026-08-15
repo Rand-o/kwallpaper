@@ -54,7 +54,8 @@ def change_wallpaper(image_path: str) -> bool:
              '--object-path', _PLASMA_PATH,
              '--method', 'org.freedesktop.DBus.Peer.Ping'],
             capture_output=True,
-            text=True
+            text=True,
+            timeout=5
         )
         if plasma_check.returncode != 0:
             print("Error: Plasma shell is not running. Please start Plasma first.", file=sys.stderr)
@@ -92,7 +93,11 @@ def change_wallpaper(image_path: str) -> bool:
 
         screen_num = 0
         success_count = 0
-        while True:
+        # Bounded: Plasma reports the screen count above; cap the loop well
+        # beyond any sane monitor count so a misbehaving D-Bus reply can't
+        # spin the worker thread forever.
+        max_screens = max(screen_count, 1) + 8
+        while screen_num < max_screens:
             try:
                 result = subprocess.run(
                     ['gdbus', 'call', '--session', '--dest', _PLASMA_DEST,

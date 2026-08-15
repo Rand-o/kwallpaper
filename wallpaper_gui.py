@@ -16,6 +16,7 @@ import sys
 import logging
 import json
 import socket
+import threading
 from pathlib import Path
 from typing import Optional
 from datetime import datetime
@@ -265,7 +266,8 @@ class _PixmapLoader(QRunnable):
 
     Cancellable: if the caller bumps ``token.version`` (e.g. the user
     switched themes) the worker skips its emit so the stale image never
-    reaches the GUI thread's state.
+    reaches the GUI thread's state.  The version is re-checked *after*
+    decoding as well, so a theme switch mid-decode drops the result.
     """
 
     def __init__(self, path: str, sig: QObject, token=None):
@@ -277,11 +279,13 @@ class _PixmapLoader(QRunnable):
 
     def run(self):
         v = self._token.version if self._token else 0
+        if self._token is not None and self._token.version != v:
+            return  # superseded before we even started
         img = QImage(self._path)
         if img.isNull():
             img = QImage()
         if self._token is not None and self._token.version != v:
-            return  # superseded; don't emit stale image to GUI thread
+            return  # superseded while decoding; don't emit stale image
         # .copy() gives the image its own pixel buffer before it crosses the
         # thread boundary.  QImage is implicitly shared (COW): the emit
         # increments the refcount, and the worker thread's local `img`
@@ -309,7 +313,11 @@ class _ThumbnailWorker(QRunnable):
     def run(self):
         v = self._token.version if self._token else 0
         from kwallpaper.wallpaper_changer import ensure_thumbnail
-        thumb = ensure_thumbnail(self._path)
+        # Pass the token so ensure_thumbnail can abort mid-decode when the
+        # theme is switched (otherwise abandoned workers keep decoding
+        # full-res JPEGs and writing thumbnails for themes nobody is
+        # looking at).
+        thumb = ensure_thumbnail(self._path, token=self._token)
         if self._token is not None and self._token.version != v:
             return  # superseded; don't touch GUI state
         self._sig.thumb_ready.emit(self._path, thumb)
@@ -386,6 +394,11 @@ class ImageCrossFadeWidget(QWidget):
         self._scaled: dict[int, QPixmap] = {}    # image idx -> scaled pixmap
         self._loading: set[str] = set()          # thumb paths in flight
         self._token = _LoadToken()               # bump to cancel in-flight
+        # Guards all state above.  Every access happens on the GUI thread
+        # (Qt guarantees single-threaded widget access), but the lock makes
+        # the invariants explicit and protects the state from being mutated
+        # by re-entrant slots (signals emitted during update()/paint).
+        self._state_lock = threading.Lock()
 
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(4)  # bounded decode concurrency
@@ -427,26 +440,36 @@ class ImageCrossFadeWidget(QWidget):
         previous list are cancelled via the load token."""
         self._timer.stop()
         self._anim.stop()
-        self._token.version += 1  # cancel in-flight loads from old list
-        self._images = list(paths)
-        self._idx = 0
-        self._blend = 0.0
-        self._thumb_paths = {}
-        self._scaled = {}
-        self._loading = set()
-        self._request_eager()
+        with self._state_lock:
+            self._token.version += 1  # cancel in-flight loads from old list
+            self._images = list(paths)
+            self._idx = 0
+            self._blend = 0.0
+            self._thumb_paths = {}
+            self._scaled = {}
+            # Clear in-flight markers: a load cancelled by the token bump
+            # above will never fire its _on_image_loaded, so its marker would
+            # leak and permanently block any future re-load of that thumb.
+            self._loading = set()
+            n = len(self._images)
+        if n:
+            self._request_eager()
         self.update()
 
     def _request_eager(self):
         """Request the current image plus the next _EAGER_AHEAD images."""
-        n = len(self._images)
-        if n == 0:
-            return
+        with self._state_lock:
+            n = len(self._images)
+            if n == 0:
+                return
+            idx = self._idx
         for off in range(self._EAGER_AHEAD + 1):
-            self._request((self._idx + off) % n)
+            self._request((idx + off) % n)
 
     def start(self):
-        if len(self._images) > 1:
+        with self._state_lock:
+            multi = len(self._images) > 1
+        if multi:
             self._timer.start()
 
     def stop(self):
@@ -456,52 +479,74 @@ class ImageCrossFadeWidget(QWidget):
     # -- background loading ----------------------------------------------------
     def _request(self, idx: int):
         """Kick off the thumbnail + pixmap pipeline for one image."""
-        if not (0 <= idx < len(self._images)):
-            return
-        path = self._images[idx]
-        if idx in self._thumb_paths or idx in self._scaled:
-            return
+        with self._state_lock:
+            if not (0 <= idx < len(self._images)):
+                return
+            path = self._images[idx]
+            if idx in self._thumb_paths or idx in self._scaled:
+                return
         self._pool.start(_ThumbnailWorker(path, self._signals, self._token))
 
     def _on_thumb_ready(self, src: str, thumb: str):
-        idx = self._images.index(src) if src in self._images else None
-        if idx is None:
+        # Stale-result guard: if the image list changed while this thumb was
+        # in flight, src is no longer in _images and we must not touch state.
+        # (list.index() would raise ValueError on the GUI thread.)
+        with self._state_lock:
+            if src not in self._images:
+                return
+            idx = self._images.index(src)
+            self._thumb_paths[idx] = thumb
+            cached = self._raw_cache.get(thumb)
+            need_load = thumb not in self._loading
+            if need_load:
+                self._loading.add(thumb)
+        if cached is not None:
+            self._on_image_loaded(thumb, cached.toImage())
             return
-        self._thumb_paths[idx] = thumb
-        if thumb in self._raw_cache:
-            self._on_image_loaded(thumb, self._raw_cache[thumb].toImage())
-            return
-        if thumb in self._loading:
-            return
-        self._loading.add(thumb)
-        self._pool.start(_PixmapLoader(thumb, self._signals, self._token))
+        if need_load:
+            self._pool.start(_PixmapLoader(thumb, self._signals, self._token))
 
     def _on_image_loaded(self, thumb: str, img: QImage):
-        self._loading.discard(thumb)
+        with self._state_lock:
+            self._loading.discard(thumb)
+            # Guard against stale results: if the image list changed while
+            # this image was loading, the thumb path no longer maps to a
+            # valid index.  (Check membership, not iteration: iterating
+            # _thumb_paths while assigning into it elsewhere raises
+            # RuntimeError on the GUI thread.)
+            if thumb not in self._thumb_paths.values():
+                return
+            # Scale once to current widget size for every image using this
+            # thumb.  Collect the indices first, then assign: mutating
+            # _scaled while iterating _thumb_paths is safe only because we
+            # never mutate _thumb_paths here, but snapshotting the index
+            # list keeps the logic obviously correct.
+            targets = [idx for idx, t in self._thumb_paths.items()
+                       if t == thumb and idx not in self._scaled]
         if img.isNull():
             return
         # Convert to QPixmap on the GUI thread: the QPixmap must only ever
         # be created and used on the thread that paints with it.
         pm = QPixmap.fromImage(img)
-        # Guard against stale results: if the image list changed while this
-        # image was loading, the thumb path no longer maps to a valid index.
-        if thumb not in self._thumb_paths.values():
-            return
-        # LRU insert: move to end, evict oldest beyond the byte budget
-        old = self._raw_cache.pop(thumb, None)
-        if old is not None:
-            self._raw_bytes -= self._pixmap_bytes(old)
-        self._raw_cache[thumb] = pm
-        self._raw_bytes += self._pixmap_bytes(pm)
-        while (self._raw_bytes > self._MAX_CACHE_BYTES
-               and len(self._raw_cache) > 1):
-            oldest = next(iter(self._raw_cache))
-            self._raw_bytes -= self._pixmap_bytes(self._raw_cache[oldest])
-            self._raw_cache.pop(oldest)
-        # Scale once to current widget size for every image using this thumb
-        for idx, t in self._thumb_paths.items():
-            if t == thumb and idx not in self._scaled:
-                self._scaled[idx] = self._scale_to_widget(pm)
+        with self._state_lock:
+            # Re-check after the (blocking) QPixmap conversion: the list may
+            # have changed while we were converting.
+            if thumb not in self._thumb_paths.values():
+                return
+            # LRU insert: move to end, evict oldest beyond the byte budget
+            old = self._raw_cache.pop(thumb, None)
+            if old is not None:
+                self._raw_bytes -= self._pixmap_bytes(old)
+            self._raw_cache[thumb] = pm
+            self._raw_bytes += self._pixmap_bytes(pm)
+            while (self._raw_bytes > self._MAX_CACHE_BYTES
+                   and len(self._raw_cache) > 1):
+                oldest = next(iter(self._raw_cache))
+                self._raw_bytes -= self._pixmap_bytes(self._raw_cache[oldest])
+                self._raw_cache.pop(oldest)
+            for idx in targets:
+                if idx not in self._scaled:
+                    self._scaled[idx] = self._scale_to_widget(pm)
         self.update()
 
     @staticmethod
@@ -520,18 +565,20 @@ class ImageCrossFadeWidget(QWidget):
     def _scaled_for(self, idx: int):
         """Return the scaled pixmap for idx, scaling the cached raw pixmap on
         demand if its thumb was never registered (lazy-load race)."""
-        pm = self._scaled.get(idx)
-        if pm is not None:
-            return pm
-        t = self._thumb_paths.get(idx)
-        if t is not None and t in self._raw_cache:
-            pm = self._scaled[idx] = self._scale_to_widget(self._raw_cache[t])
+        with self._state_lock:
+            pm = self._scaled.get(idx)
+            if pm is not None:
+                return pm
+            t = self._thumb_paths.get(idx)
+            if t is not None and t in self._raw_cache:
+                pm = self._scaled[idx] = self._scale_to_widget(self._raw_cache[t])
         return pm
 
     def _advance(self):
-        if len(self._images) < 2:
-            return
-        nxt = (self._idx + 1) % len(self._images)
+        with self._state_lock:
+            if len(self._images) < 2:
+                return
+            nxt = (self._idx + 1) % len(self._images)
         # Make sure the fade target is in the pipeline (its raw pixmap may
         # have been cached earlier without its thumb ever being registered).
         self._request(nxt)
@@ -545,22 +592,31 @@ class ImageCrossFadeWidget(QWidget):
             self._anim.setEndValue(1.0)
             self._anim.start()
         else:
-            self._idx = nxt
-            self._blend = 0.0
+            with self._state_lock:
+                self._idx = nxt
+                self._blend = 0.0
             self.update()
 
     def _on_fade_done(self):
-        self._idx = (self._idx + 1) % len(self._images)
-        self._blend = 0.0
+        with self._state_lock:
+            n = len(self._images)
+            if n == 0:
+                return
+            self._idx = (self._idx + 1) % n
+            self._blend = 0.0
         self.update()
 
     def resizeEvent(self, event):
         # Widget size changed: re-scale cached pixmaps once, not per-paint.
-        self._scaled = {}
-        for idx, t in self._thumb_paths.items():
-            pm = self._raw_cache.get(t)
-            if pm is not None:
-                self._scaled[idx] = self._scale_to_widget(pm)
+        # Snapshot under the lock; do the (relatively expensive) scaling
+        # outside the lock so a slow scale can't stall signal delivery.
+        with self._state_lock:
+            pairs = [(idx, self._raw_cache[t])
+                     for idx, t in self._thumb_paths.items()
+                     if t in self._raw_cache]
+            self._scaled = {}
+        for idx, pm in pairs:
+            self._scaled[idx] = self._scale_to_widget(pm)
         super().resizeEvent(event)
 
     def paintEvent(self, event):
@@ -568,7 +624,14 @@ class ImageCrossFadeWidget(QWidget):
         pal = self.palette()
         sz = self.size()
 
-        if not self._images:
+        with self._state_lock:
+            n = len(self._images)
+            idx = self._idx if n else 0
+            blend = self._blend
+            cur = self._scaled.get(idx) if n else None
+            nxt = self._scaled.get((idx + 1) % n) if (n and blend > 0.001) else None
+
+        if n == 0:
             # Draw dashed placeholder
             pen = QPen(pal.color(QPalette.ColorRole.Mid))
             pen.setStyle(Qt.PenStyle.DashLine)
@@ -582,7 +645,6 @@ class ImageCrossFadeWidget(QWidget):
             painter.end()
             return
 
-        cur = self._scaled_for(self._idx)
         if cur is None:
             # Fast placeholder until the first background load arrives
             painter.fillRect(self.rect(),
@@ -595,16 +657,14 @@ class ImageCrossFadeWidget(QWidget):
 
         cx = (sz.width()  - cur.width())  // 2
         cy = (sz.height() - cur.height()) // 2
-        painter.setOpacity(1.0 - self._blend)
+        painter.setOpacity(1.0 - blend)
         painter.drawPixmap(cx, cy, cur)
 
-        if self._blend > 0.001:
-            nxt = self._scaled.get((self._idx + 1) % len(self._images))
-            if nxt is not None:
-                nx = (sz.width()  - nxt.width())  // 2
-                ny = (sz.height() - nxt.height()) // 2
-                painter.setOpacity(self._blend)
-                painter.drawPixmap(nx, ny, nxt)
+        if blend > 0.001 and nxt is not None:
+            nx = (sz.width()  - nxt.width())  // 2
+            ny = (sz.height() - nxt.height()) // 2
+            painter.setOpacity(blend)
+            painter.drawPixmap(nx, ny, nxt)
 
         painter.end()
 
@@ -1627,6 +1687,7 @@ class WallpaperChangerWindow(QMainWindow):
         # QThreadPool destructor's waitForDone() spinning indefinitely and
         # freeze the window on close/quit.
         self.themes.preview.stop()
+        self.themes.preview._token.version += 1  # cancel in-flight decodes
         self.themes.preview._pool.clear()
         self.themes._pool.clear()
         # Drain whatever is still running, but only briefly: the pools are
@@ -1636,7 +1697,10 @@ class WallpaperChangerWindow(QMainWindow):
         self.themes.preview._pool.waitForDone(1000)
         self.themes._pool.waitForDone(1000)
         if self.sched.is_running():
-            self.sched.scheduler.stop(wait=True)
+            # wait=False: the scheduler's own thread pool handles draining;
+            # blocking the GUI thread here could stall for the full cycle
+            # interval (gdbus calls).
+            self.sched.scheduler.stop(wait=False)
 
     def _maybe_start_scheduler(self):
         """Auto-start scheduler if enabled in config."""
