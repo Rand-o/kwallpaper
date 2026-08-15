@@ -1308,6 +1308,7 @@ class SchedulerPage(QWidget):
     """Start / stop the background scheduler and view its event log."""
 
     state_changed = pyqtSignal(bool)        # True = running
+    _log_line = pyqtSignal(str)             # queued to GUI thread for _append
 
     def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
@@ -1317,6 +1318,12 @@ class SchedulerPage(QWidget):
         ensure_config_dirs()
         self.scheduler: Optional[SchedulerManager] = None
         self._build()
+        # The scheduler emits log lines from its own worker thread.  Qt
+        # widgets are not thread-safe, so hop to the GUI thread via a queued
+        # signal before touching the QTextEdit.  Calling _append directly from
+        # the scheduler thread deadlocks the event loop (a cross-thread
+        # QTextEdit.append spins holding the GIL and the GUI thread stalls).
+        self._log_line.connect(self._append)
         self._init_scheduler()
 
     def _build(self):
@@ -1365,14 +1372,18 @@ class SchedulerPage(QWidget):
     def _init_scheduler(self):
         try:
             self.scheduler = create_scheduler(self._cfg)
-            # Wire scheduler task results into the GUI event log
-            self.scheduler.log_callback = self._append
+            # Wire scheduler task results into the GUI event log.  This runs
+            # on the scheduler's worker thread, so only emit the queued
+            # signal -- never touch the QTextEdit directly from here.
+            self.scheduler.log_callback = self._log_line.emit
         except Exception as e:
             logger.error(f"Scheduler init: {e}")
             self._append(f"Init error: {e}")
 
     # ── helpers ---------------------------------------------------------------
     def _append(self, msg: str):
+        # GUI-thread only: called directly (e.g. from start/stop) or via the
+        # queued _log_line signal for scheduler-thread messages.
         ts = datetime.now().strftime("%I:%M:%S %p")
         self.log.append(f"[{ts}]  {msg}")
 
