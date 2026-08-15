@@ -169,25 +169,83 @@ def apply_color_scheme(name: str):
 # ── Icon management for theme-aware icons ────────────────────────────────────────────
 
 
+def _icons_dir() -> Path:
+    """Locate the bundled icons directory.
+
+    The GUI script is copied to /app/lib/python3/ in the Flatpak while the
+    icons live in /app/lib/python3/kwallpaper/icons/, so the icons are not
+    always next to the script.  Check both locations.
+    """
+    for d in (Path(__file__).parent / "icons",
+              Path(__file__).parent / "kwallpaper" / "icons"):
+        if d.is_dir():
+            return d
+    return Path(__file__).parent / "icons"
+
+
+def _icon_path(filename: str) -> Optional[Path]:
+    p = _icons_dir() / filename
+    return p if p.exists() else None
+
+
+def _effective_mode(theme_mode: str) -> str:
+    """Resolve 'system' to the actual light/dark state of the palette.
+
+    Uses the palette's Window colour: Breeze Light is #eff0f1 (lum ~239),
+    Breeze Dark is #31363b (lum ~53).
+    """
+    if theme_mode in ("light", "dark"):
+        return theme_mode
+    try:
+        app = QApplication.instance()
+        if app is not None:
+            win = app.palette().color(QPalette.ColorRole.Window)
+            lum = 0.299 * win.red() + 0.587 * win.green() + 0.114 * win.blue()
+            return "dark" if lum < 128 else "light"
+    except Exception:
+        pass
+    return "light"
+
+
 def get_icon_for_theme(theme_mode: str) -> QIcon:
-    """Get appropriate icon based on theme mode: "system", "light", or "dark"."""
-    icons_dir = Path(__file__).parent / "icons"
-    
-    # Map theme modes to icon filenames
-    icon_map = {
-        "light": "kWallpaper-light.png",
-        "dark": "kWallpaper-dark.png",
-        "system": "kWallpaper-light.png",  # Default to light for system mode
-    }
-    
-    icon_filename = icon_map.get(theme_mode, "kwallpaper.png")
-    icon_path = icons_dir / icon_filename
-    
-    if icon_path.exists():
-        return QIcon(str(icon_path))
-    else:
-        # Fallback to theme icon
-        return QIcon.fromTheme("preferences-desktop-wallpaper", QIcon.fromTheme("image-x-generic"))
+    """Get the coloured app icon for the given theme mode."""
+    p = _icon_path("kwallpaper.png")
+    if p is not None:
+        return QIcon(str(p))
+    return QIcon.fromTheme("preferences-desktop-wallpaper",
+                           QIcon.fromTheme("image-x-generic"))
+
+
+def get_tray_icon_for_theme(theme_mode: str) -> QIcon:
+    """Get the monochrome tray icon matching the theme mode.
+
+    Plasma's system tray expects small monochrome (Symbolic-style) icons;
+    the 512px light/dark PNGs are scaled down to the standard tray sizes
+    and offered as multiple pixmap variants so the tray picks the best
+    match.  'system' resolves against the current palette so it follows
+    the KDE light/dark theme.
+    """
+    mode = _effective_mode(theme_mode)
+    filename = {"light": "kWallpaper-light.png",
+                "dark": "kWallpaper-dark.png"}.get(mode,
+                                                   "kWallpaper-light.png")
+    p = _icon_path(filename)
+    if p is None:
+        # Fall back to the coloured icon, then the theme icon
+        p = _icon_path("kwallpaper.png")
+        if p is not None:
+            return QIcon(str(p))
+        return QIcon.fromTheme("preferences-desktop-wallpaper",
+                               QIcon.fromTheme("image-x-generic"))
+
+    icon = QIcon()
+    pm = QPixmap(str(p))
+    for size in (16, 22, 24, 32, 48):
+        icon.addPixmap(pm.scaled(
+            size, size,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation))
+    return icon
 
 # ═════════════════════════════════════════════════════════════════════════════
 #  Widgets
@@ -1074,8 +1132,7 @@ class SettingsPage(QWidget):
             c.setdefault("application", {})["theme_mode"] = name
             save_config(self._cfg, c)
             # Refresh window and tray icons based on theme
-            self.setWindowIcon(self._get_current_icon())
-            self.tray.setIcon(self._get_current_icon())
+            self._refresh_icons()
         except Exception:
             pass
 
@@ -1322,18 +1379,30 @@ class WallpaperChangerWindow(QMainWindow):
 
     # ── UI construction -------------------------------------------------------
 
-    def _get_current_icon(self) -> QIcon:
-        """Get the icon corresponding to the current theme mode."""
+    def _icon_mode(self) -> str:
+        """The configured theme mode ('system', 'light', or 'dark')."""
         try:
             c = load_config(self._cfg)
-            mode = c.get("application", {}).get("theme_mode", "system")
-            return get_icon_for_theme(mode)
+            return c.get("application", {}).get("theme_mode", "system")
         except Exception:
-            return get_icon_for_theme("system")
-    
+            return "system"
+
+    def _get_current_icon(self) -> QIcon:
+        """Coloured app icon for the window (theme-aware)."""
+        return get_icon_for_theme(self._icon_mode())
+
+    def _get_tray_icon(self) -> QIcon:
+        """Monochrome tray icon matching the theme (light/dark aware)."""
+        return get_tray_icon_for_theme(self._icon_mode())
+
+    def _refresh_icons(self):
+        """Refresh both window and tray icons after a theme change."""
+        self.setWindowIcon(self._get_current_icon())
+        self.tray.setIcon(self._get_tray_icon())
+
     def _build_ui(self):
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(get_icon_for_theme("system"))
+        self.setWindowIcon(self._get_current_icon())
         self.resize(1200, 700)
         self.setMinimumSize(800, 500)
 
@@ -1402,7 +1471,7 @@ class WallpaperChangerWindow(QMainWindow):
             self.themes.set_tab_visible(True)
 
     def _build_tray(self):
-        self.tray = QSystemTrayIcon(self._get_current_icon(), self)
+        self.tray = QSystemTrayIcon(self._get_tray_icon(), self)
         self.tray.setToolTip(APP_NAME)
         self.tray.activated.connect(self._on_tray)
         self._refresh_tray()
@@ -1512,8 +1581,7 @@ class WallpaperChangerWindow(QMainWindow):
             self.settings.scheme.setCurrentIndex(idx)
             self.settings.scheme.blockSignals(False)
             # Refresh window and tray icons based on theme
-            self.setWindowIcon(self._get_current_icon())
-            self.tray.setIcon(self._get_current_icon())
+            self._refresh_icons()
         except Exception:
             pass
 
