@@ -1,56 +1,86 @@
-# KDE Wallpaper Changer
+# kWallpaper
 
-⚠️ **KDE Linux Only** - This application requires KDE Plasma 6 and will not work on other desktop environments or operating systems. However, you can modify the code to use a different UI toolkit (e.g., GTK for GNOME) by replacing the PyQt6 components with your preferred GUI framework.
+⚠️ **KDE Plasma 6 / Linux Only** — This application requires KDE Plasma 6 and will not work on other desktop environments or operating systems. (The core is toolkit-agnostic, so the GUI could be ported to GTK/other frameworks, but out of the box it uses PyQt6 for native KDE integration.)
 
-A beautiful, native styled KDE Plasma 6 application for automatically changing wallpapers based on time-of-day categories using .ddw (wallpaper theme) zip files. Features a modern GUI with cross-fade image previews, scheduler controls, and system tray integration.
+A native-styled KDE Plasma 6 application that automatically changes your wallpaper based on time-of-day, driven by `.ddw` (wallpaper theme) zip files. It features an instant, thumbnail-backed cross-fade preview, background scheduler controls, system tray integration, and a single-instance GUI.
 
-This project was vibe coded with Qwen3-Coder-Next and in some part GLM-4.7-Flash. The GUI was created in one prompt with Claude Opus 4.6. I used to use a program on Mac OS called 24hr Wallpaper and I really missed having it when I moved to KDE (Linux), so I made my own. It works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwindows) and automatically changes your wallpaper based on the time of day at your configured location. You can also create your own themes following Jetson Creative's format.
+Works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwindows) (Jetson Creative's `.ddw` format) — you can also create your own themes.
+
+> This project was vibe-coded with Qwen3-Coder-Next and GLM-4.7-Flash; the GUI was created in one prompt with Claude Opus 4.6. The author missed [24hr Wallpaper](https://www.jetsoncreative.com/24hourwindows) after moving from macOS to KDE and built their own.
 
 ![Theme Selector](screenshots/1themes.png)
 *Theme selector tab showing imported themes with cross-fade preview*
 
 ![Settings Page](screenshots/2settings.png)
-*Settings tab with scheduler configuration and location timezone coordinates*
+*Settings tab with scheduler configuration and location/timezone coordinates*
 
 ## Features
 
-### GUI Features
-- **Cross-fade image preview** - Smooth visual transitions between theme images
-- **Theme management** - Import and browse .ddw/.zip themes with instant previews
-- **Scheduler controls** - Start/stop background scheduler with event logging
-- **System tray integration** - Quick access to controls from system tray
-- **Multiple tabs** - Themes, Settings, and Scheduler tabs for organized workflow
-- **Auto-apply theme** - Apply selected theme with one click
-- **Daily theme shuffle** - Automatic theme rotation with shuffle management
-- **Native KDE integration** - Breeze color scheme, system icons, single-instance
+### GUI
+- **Instant theme previews** — 1080p JPEG thumbnails are generated and decoded off the GUI thread (`QThreadPool` workers); the cross-fade widget only ever renders thumbnails, never full-resolution 4K images. Selecting a theme shows a first frame in milliseconds, with no event-loop jank.
+- **Theme management** — Import `.ddw`/`.zip` themes, browse, and delete them. Import/delete/apply all run in background workers so the UI never freezes, even on large `.ddw` files.
+- **Cross-fade preview** — Smooth animated transitions between theme images, with a pre-scaled pixmap cache (scaled once per image, invalidated only on resize).
+- **Scheduler tab** — Start/stop the background scheduler, view status, and follow a live event log.
+- **System tray** — Quick start/stop, show/hide window, theme-aware light/dark tray icons.
+- **Single instance** — Launching a second copy focuses the running window instead of starting a second app.
+- **Auto-start** — Optional "start at login" (writes a `~/.config/autostart` desktop entry) and "start scheduler on app launch".
+- **Native KDE integration** — Breeze color scheme, system icons, configurable appearance (system/light/dark).
 
-### Time-based Wallpaper Selection
-- Automatic time-of-day detection using Astral library (night, sunrise, day, sunset)
-- Image selection based on position within time period
-- Configurable location and timezone for accurate sunrise/sunset calculations
+### Time-based wallpaper selection
+- Accurate dawn/sunrise/sunset/dusk calculations via the [Astral](https://pypi.org/project/astral/) library.
+- One single source of truth for all period math (`kwallpaper/suntime.py`), shared by the GUI, CLI, and scheduler.
+- Configurable location (city, latitude, longitude, IANA timezone) with auto-detect.
+- Image selection based on position within the current time-of-day period.
 
-### Background Scheduler
-- Runs continuously without GUI
-- Configurable cycle intervals
-- Automatic theme rotation with shuffle support
-- Event logging for troubleshooting
+### Background scheduler
+- `cycle_task` — interval-based (default every 60 s), re-applies the correct image for the current time-of-day.
+- `change_task` — daily theme shuffle, scheduled at **local midnight** via `CronTrigger` (no longer fires every interval).
+- A lock prevents the two jobs from overlapping; every run is logged to the GUI event log.
+- Daily shuffle list management with atomic single-writer state (`shuffle-list.json`).
+
+## Architecture
+
+The original ~2,700-line `wallpaper_changer.py` god module was split into focused modules (phases 0–5 of the code-review plan are implemented):
+
+```
+kwallpaper/
+├── __init__.py               # Package init
+├── config.py                 # Paths, load/save/validate, one-time dir bootstrap
+├── backup.py                 # Daily astral schedule backup
+├── suntime.py                # ONE implementation of dawn/sunrise/sunset/dusk math
+├── selection.py              # Image file/index selection (theme.json + glob)
+├── themes.py                 # Discovery, extraction, import/delete, thumbnails
+├── wallpaper.py              # Plasma D-Bus wallpaper application (gdbus)
+├── shuffle_list_manager.py   # Daily shuffle list state (single writer)
+├── scheduler.py              # APScheduler manager (daily cron + interval cycle)
+├── core.py                   # High-level API: apply_theme / import_theme /
+│                             #   delete_theme / set_wallpaper (used by CLI + GUI)
+├── cli.py                    # Pure argparse dispatch (run_*_command, main)
+└── wallpaper_changer.py      # Compatibility facade re-exporting the old API
+```
+
+Design notes:
+
+- **`core.py` is the clean API.** Both the CLI (`cli.py`) and the GUI call `apply_theme()`, `import_theme()`, `delete_theme()`, and `set_wallpaper()`. `apply_theme()` owns the config read-modify-write and shuffle-list state atomically.
+- **No GUI-thread I/O.** All blocking work (JSON I/O, astral math, D-Bus calls, zip extraction, thumbnail generation, image decoding) runs in `QThreadPool` workers (`_OpWorker`, `_ThumbnailWorker`, `_PixmapLoader`).
+- **`wallpaper_changer.py` remains only as a compatibility facade** so existing `from kwallpaper.wallpaper_changer import X` imports keep working.
+- **Config is loaded/saved once per operation** — `ensure_config_dirs()` is idempotent and does filesystem work only once per process.
 
 ## Requirements
 
-- **Python 3.10+** (Python 3.13 recommended for Flatpak builds)
+- **Python 3.10+** (Python 3.12/3.13 for Flatpak builds)
 - **KDE Plasma 6** (any recent version)
 - **Linux distribution with KDE Plasma** (Fedora, Ubuntu, Arch, etc.)
 
 ### System Commands
-- `plasma-apply-wallpaperimage` - Primary method for setting wallpapers
-- `kwriteconfig5` - Fallback method for setting wallpapers
-- `kreadconfig5` - Reading current wallpaper path
-- `pgrep` - Checking if Plasma is running
+- `gdbus` — Plasma D-Bus calls for setting/querying the wallpaper (per-screen `org.kde.plasmashell`)
+- `pgrep` — Checking if Plasma is running
 
 ### Python Dependencies
 ```bash
 pip install -r requirements.txt
 ```
+Runtime: `astral`, `apscheduler`, `PyQt6`. Dev: `pytest`, `pytest-cov`.
 
 ## Installation
 
@@ -60,26 +90,26 @@ pip install kwallpaper-changer
 ```
 
 ### From Source
-1. Clone or download the repository:
 ```bash
 git clone <repository-url>
 cd kwallpaper
-```
-
-2. Install Python dependencies:
-```bash
 pip install -r requirements.txt
+python wallpaper_gui.py
 ```
 
-3. Launch the GUI:
+### Flatpak
+A Flatpak bundle is available with all Python dependencies embedded (Python 3.12, `org.kde.Platform` 6.9 runtime):
+
 ```bash
-python wallpaper_gui.py
+cd flatpak
+./build.sh
+flatpak install --user bundle/top.spelunk.kwallpaper.flatpak
 ```
 
 ## Configuration
 
 ### Config File Location
-Default: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
+Default: `~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json`
 
 ```json
 {
@@ -89,7 +119,8 @@ Default: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
   "scheduling": {
     "interval": 60,
     "run_cycle": true,
-    "daily_shuffle_enabled": true
+    "daily_shuffle_enabled": true,
+    "auto_start_on_launch": false
   },
   "location": {
     "city": "Phoenix",
@@ -98,7 +129,8 @@ Default: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
     "timezone": "America/Phoenix"
   },
   "application": {
-    "theme_mode": "system"
+    "theme_mode": "system",
+    "autostart": false
   },
   "theme": {
     "last_applied": "theme-name"
@@ -114,79 +146,78 @@ Default: `~/.var/app/org.kde.kwallpaper/config/wallpaper-changer/config.json`
 | retry_attempts | integer | Retry attempts on failure (default: 3) |
 | retry_delay | integer | Delay between retries in seconds (default: 5) |
 | scheduling.interval | integer | Scheduler cycle interval in seconds (default: 60) |
-| scheduling.run_cycle | boolean | Enable cycle task (default: true) |
-| scheduling.daily_shuffle_enabled | boolean | Enable daily theme shuffle (default: true) |
-| location.timezone | string | IANA timezone string (e.g., America/Phoenix) |
+| scheduling.run_cycle | boolean | Enable interval cycle task (default: true) |
+| scheduling.daily_shuffle_enabled | boolean | Enable daily theme shuffle at midnight (default: true) |
+| scheduling.auto_start_on_launch | boolean | Start the scheduler when the GUI launches (default: false) |
+| location.city | string | City name (display only) |
+| location.timezone | string | IANA timezone string (e.g., `America/Phoenix`) |
 | location.latitude | float | Latitude for sunrise/sunset calculations |
 | location.longitude | float | Longitude for sunrise/sunset calculations |
 | application.theme_mode | string | Color scheme: system/light/dark (default: system) |
+| application.autostart | boolean | Start kWallpaper automatically at login (default: false) |
 | theme.last_applied | string | Last applied theme folder name |
 
-### Time-of-Day Categories
-The tool uses Astral library to calculate accurate sunrise/sunset times:
+Other paths (all under `~/.var/app/top.spelunk.kwallpaper/`):
 
-- **night**: From dusk until dawn-30min (last 30 minutes before dawn shows image 1)
-- **sunrise**: From dawn-30min until sunrise+45min
-- **day**: From sunrise+45min until sunset-45min
-- **sunset**: From sunset-45min until dusk
+| Path | Purpose |
+|------|---------|
+| `config/kwallpaper/config.json` | Main config |
+| `config/kwallpaper/themes/` | Imported themes (one directory per theme) |
+| `config/kwallpaper/shuffle-list.json` | Daily shuffle list state |
+| `cache/kwallpaper/thumbs/` | Generated 1080p preview thumbnails |
+| `cache/kwallpaper/schedule-backup/` | Daily astral schedule backups |
+
+### Time-of-Day Categories
+The Astral library computes four values (dawn, sunrise, sunset, dusk) for your location. All period boundaries are derived from them in one place (`suntime.py`):
+
+- **night**: from dusk until dawn − 30 min (spans midnight)
+- **sunrise**: from dawn − 30 min until sunrise + 45 min
+- **day**: from sunrise + 45 min until dusk − 45 min
+- **sunset**: from dusk − 45 min until dusk
 
 ### Image Indexing
-Images are numbered 1-16 in the theme. The normalization ensures:
-- Image 1 is always in the sunrise category (for the last 30 minutes before dawn)
-- Images 14-16 are in the night category
-- Images 2-4 are in the sunrise category
-- Images 5-9 are in the day category
-- Images 10-13 are in the sunset category
+Images are numbered 1–16 in the theme. Normalization ensures:
+- Image 1 is always in the sunrise category (last 30 minutes before dawn)
+- Images 2–4 are in the sunrise category
+- Images 5–9 are in the day category
+- Images 10–13 are in the sunset category
+- Images 14–16 are in the night category
 
 ## Quick Start
 
 1. **Launch the application:**
-```bash
-python wallpaper_gui.py
-```
-
-2. **Import a theme:**
-   - Click "Import" button in the Themes tab
-   - Select a .ddw or .zip file
-   - The theme will be automatically extracted
-
-3. **Apply a theme:**
-   - Select a theme from the list
-   - Click "Apply" to set it as your wallpaper
-   - The scheduler can be started for automatic rotation
-
-4. **Configure scheduler:**
-   - Go to the Scheduler tab
-   - Click "Start" to enable background wallpaper rotation
-   - Adjust interval in Settings tab
-
-5. **View themes:**
-   - Themes tab shows all imported themes
-   - Preview automatically starts when tab is visible
-   - Cross-fade animation shows images in sequence
+   ```bash
+   python wallpaper_gui.py
+   ```
+2. **Import a theme:** click **Import** in the Themes tab and select a `.ddw` or `.zip` file — it is extracted in a background worker.
+3. **Apply a theme:** select a theme from the list and click **Apply** (runs in a worker; the button shows a busy state).
+4. **Start the scheduler:** Scheduler tab → **Start** for automatic rotation.
+5. **Configure:** interval, location/timezone, appearance, and auto-start options live in the Settings tab.
 
 ## GUI Interface
 
 ### Themes Tab
-- **Import** - Import .ddw or .zip theme files
-- **Theme list** - Browse available themes
-- **Preview** - Live cross-fade preview of theme images
-- **Apply** - Apply selected theme immediately
+- **Import** — Import `.ddw` or `.zip` theme files (background worker)
+- **Theme list** — Browse available themes with image counts
+- **Preview** — Live cross-fade preview from 1080p thumbnails (background decode)
+- **Apply** — Apply selected theme immediately (background worker)
+- **Delete** — Remove a theme (background worker)
 
 ### Settings Tab
-- **Scheduler** - Configure interval and cycle behavior
-- **Location** - Set timezone and coordinates for accurate sun calculations
-- **Appearance** - Override KDE color scheme (system/light/dark)
+- **Scheduler** — Interval, cycle behavior, daily shuffle, start-on-launch
+- **Location** — Timezone and coordinates for accurate sun calculations, with auto-detect
+- **Appearance** — Override KDE color scheme (system/light/dark)
+- **Auto-start** — Start at login (writes `~/.config/autostart` entry)
 
 ### Scheduler Tab
-- **Start/Stop** - Control background scheduler
-- **Status** - View current scheduler state
-- **Event Log** - View scheduler events and errors
+- **Start/Stop** — Control background scheduler
+- **Status** — Current scheduler state (via `get_status()`)
+- **Event Log** — Live scheduler events and errors
 
 ### System Tray
 - Quick start/stop scheduler
 - Show/hide main window
-- View scheduler status
+- Theme-aware light/dark icon
 
 ## Usage
 
@@ -195,30 +226,37 @@ python wallpaper_gui.py
 python wallpaper_gui.py
 ```
 
-### Launch CLI (for advanced users)
+### Launch CLI
 ```bash
 python wallpaper_cli.py
 ```
 
-### Import Theme
+CLI commands (dispatched by `kwallpaper/cli.py`):
+
 ```bash
-# Via GUI: Click Import button
-# Via CLI:
+# Extract a theme from a .ddw file
 python wallpaper_cli.py extract --theme-path /path/to/theme.ddw --cleanup
-```
 
-### Apply Theme
-```bash
-# Via GUI: Select theme and click Apply
-# Via CLI:
+# Change wallpaper to the next image
 python wallpaper_cli.py change --theme-path /path/to/theme.ddw
-```
 
-### Start Scheduler
-```bash
-# Via GUI: Scheduler tab → Start
-# Via CLI:
-python wallpaper_cli.py change --theme-path /path/to/theme.ddw --monitor
+# Cycle to the next image based on current time
+python wallpaper_cli.py cycle
+
+# Print current shuffle list state
+python wallpaper_cli.py shuffle-list
+
+# List available images in a time-of-day category
+python wallpaper_cli.py list --time-of-day day
+
+# Check current wallpaper
+python wallpaper_cli.py status
+
+# Manage themes
+python wallpaper_cli.py themes list
+python wallpaper_cli.py themes add --source /path/to/theme.ddw
+python wallpaper_cli.py themes remove --theme-path /path/to/theme
+python wallpaper_cli.py themes reshuffle
 ```
 
 ## Troubleshooting
@@ -226,7 +264,7 @@ python wallpaper_cli.py change --theme-path /path/to/theme.ddw --monitor
 ### Plasma Not Running
 Error: "Plasma is not running"
 
-Solution: Ensure KDE Plasma is running:
+Ensure KDE Plasma is running:
 ```bash
 pgrep -x plasmashell
 ```
@@ -234,7 +272,7 @@ pgrep -x plasmashell
 ### Theme Import Fails
 Error: "theme.json not found in zip file"
 
-Solution: Verify the .ddw file is valid:
+Verify the `.ddw` file is valid:
 ```bash
 unzip -l theme.ddw | grep "\.json"
 ```
@@ -242,124 +280,94 @@ unzip -l theme.ddw | grep "\.json"
 ### Scheduler Won't Start
 1. Check APScheduler is installed: `pip install apscheduler`
 2. Verify Plasma is running: `pgrep -x plasmashell`
-3. Check event log in Scheduler tab
+3. Check the event log in the Scheduler tab
 
 ### Color Scheme Issues
 - Try different theme modes in Settings: System/Light/Dark
-- Restart application after changing theme mode
-- Check KDE System Settings → Appearance
-
-## Troubleshooting
-
-### Plasma Not Running
-Error: "Plasma is not running"
-
-Solution: Ensure KDE Plasma is running:
-```bash
-pgrep -x plasmashell
-```
-
-### Theme Import Fails
-Error: "theme.json not found in zip file"
-
-Solution: Verify the .ddw file is valid:
-```bash
-unzip -l theme.ddw | grep "\.json"
-```
-
-### Scheduler Won't Start
-1. Check APScheduler is installed: `pip install apscheduler`
-2. Verify Plasma is running: `pgrep -x plasmashell`
-3. Check event log in Scheduler tab
-
-### Color Scheme Issues
-- Try different theme modes in Settings: System/Light/Dark
-- Restart application after changing theme mode
+- Restart the application after changing theme mode
 - Check KDE System Settings → Appearance
 
 ## FAQ
 
 ### Q: Does it work with other desktop environments?
-
-A: Currently, this tool is designed specifically for KDE Plasma. Other desktop environments may not work with plasma-apply-wallpaperimage. However, you could potentially adapt the code to use other desktop environment's wallpaper APIs.
+A: No — it is designed specifically for KDE Plasma 6. The core modules are toolkit-agnostic, so the GUI could be adapted to other desktops, but wallpaper application uses Plasma's D-Bus API.
 
 ### Q: Can I use multiple themes?
-
-A: Yes! You can maintain multiple .ddw files in different directories and switch between them manually or by creating multiple systemd services with different themes.
+A: Yes — import as many themes as you like. The daily shuffle rotates through them automatically, or switch manually with Apply.
 
 ### Q: How does time-of-day selection work?
-
-A: The tool uses the Astral library to calculate accurate sunrise/sunset times based on your location. It then divides the day into four periods:
-- **night**: Dusk to dawn-30min (last 30 min shows image 1)
-- **sunrise**: dawn-30min to sunrise+45min
-- **day**: sunrise+45min to sunset-45min
-- **sunset**: sunset-45min to dusk
-
-Within each period, images are selected based on your current position in the period.
+A: The Astral library computes dawn/sunrise/sunset/dusk for your location. The day is divided into four periods (night, sunrise, day, sunset) with fixed transition offsets (30 min before dawn, 45 min after sunrise, 45 min before dusk). Within each period, the image is chosen by your current position in the period. All of this lives in one module (`kwallpaper/suntime.py`).
 
 ### Q: Can I customize the time ranges?
-
-A: Currently, time ranges are calculated using the Astral library with fixed offsets (30 min before dawn, 45 min after sunrise, etc.). To customize, you would need to modify the detect_time_of_day_sun() function in wallpaper_changer.py.
+A: The offsets are constants in `kwallpaper/suntime.py` (documented in its module docstring, with the legacy per-selector quirks pinned by tests).
 
 ### Q: Does it support animated wallpapers?
+A: No — static JPEG/PNG images only.
 
-A: No, this tool only supports static JPEG/PNG images. Animated .ddw themes are not supported.
-
-### Q: Can I use this with flatpak?
-
-A: Not recommended. The tool requires direct access to system configuration files via plasma-apply-wallpaperimage, which may not be available in flatpak sandboxed environments. Use the installed version instead.
+### Q: Can I use this with Flatpak?
+A: Yes — a Flatpak bundle is provided (see above). The app stores everything under `~/.var/app/top.spelunk.kwallpaper/` and talks to Plasma over the session D-Bus.
 
 ### Q: How do I uninstall?
-
-A: Simply remove the repository directory and uninstall Python dependencies:
-
 ```bash
-pip uninstall -r requirements.txt
-rm -rf /path/to/kwallpaper
+pip uninstall kde-wallpaper-changer
+rm -rf ~/.var/app/top.spelunk.kwallpaper
 ```
 
 ### Q: Can I run this as a non-root user?
+A: Yes — you should run it as your regular user. It only writes to your home directory.
 
-A: Yes, you should run it as your regular user. The tool writes to your home directory config files, not system-wide files.
-
-### Q: What if the wallpaper change fails?
-
-A: The tool:
-1. Returns False from change_wallpaper()
-2. Prints an error message
-3. Can be configured to retry (via retry_attempts and retry_delay in config)
-4. Returns exit code 1
-
-Check Plasma status and error messages for root cause.
+### Q: What if a wallpaper change fails?
+A: The operation is retried per `retry_attempts`/`retry_delay` in config, failures are logged to the scheduler event log, and the CLI exits non-zero. Check Plasma status and the event log for the root cause.
 
 ## Development
 
 ### Running Tests
 ```bash
-cd /home/admin/llama-cpp/projects/kwallpaper
 python3 -m pytest tests/ -v
 ```
+134 tests cover the astral/period math (`suntime`, full-day and edge-case detection), config load/save/validation round-trips, theme zip extraction, the core API, scheduler behavior (daily cron, no-op guard, lock), and GUI operations.
 
 ### Project Structure
 ```
 kwallpaper/
-├── wallpaper_gui.py              # Main GUI application (1186 lines)
-├── wallpaper_cli.py              # CLI entry point (29 lines)
+├── wallpaper_gui.py              # Main GUI application (~1,700 lines, worker-based)
+├── wallpaper_cli.py              # CLI entry point
 ├── kwallpaper/
 │   ├── __init__.py               # Package init
-│   ├── wallpaper_changer.py      # Core functionality (2678 lines)
-│   ├── scheduler.py              # Background scheduler (242 lines)
-│   └── shuffle_list_manager.py   # Theme shuffling (186 lines)
-│
+│   ├── config.py                 # Config paths, load/save/validate
+│   ├── backup.py                 # Daily schedule backup
+│   ├── suntime.py                # Astral time-of-day math (single source of truth)
+│   ├── selection.py              # Image file/index selection
+│   ├── themes.py                 # Theme discovery/extraction/import/delete/thumbs
+│   ├── wallpaper.py              # Plasma D-Bus wallpaper application
+│   ├── shuffle_list_manager.py   # Daily shuffle list state
+│   ├── scheduler.py              # APScheduler manager
+│   ├── core.py                   # High-level API (CLI + GUI)
+│   ├── cli.py                    # argparse dispatch
+│   └── wallpaper_changer.py      # Compatibility facade (legacy imports)
 ├── tests/
+│   ├── test_astral_time_detection.py
+│   ├── test_full_day_astral.py
+│   ├── test_suntime.py
 │   ├── test_config.py
 │   ├── test_config_validation.py
+│   ├── test_core_api.py
 │   ├── test_zip_extraction.py
 │   ├── test_helper_functions.py
-│   ├── test_wallpaper_change.py
-│   ├── test_full_day_astral.py
-│   └── test_astral_time_detection.py
+│   ├── test_scheduler.py
+│   ├── test_scheduler_autostart.py
+│   ├── test_gui_autostart.py
+│   ├── test_gui_ops.py
+│   ├── test_location_autodetect.py
+│   └── test_wallpaper_change.py
+├── flatpak/                      # Flatpak manifest, build scripts, bundled repo
+├── icons/                        # Theme-aware app/tray icons
+├── screenshots/                  # README screenshots
 ├── requirements.txt              # Python dependencies
+├── setup.py                      # PyPI packaging
+├── top.spelunk.kwallpaper.desktop
+├── top.spelunk.kwallpaper.autostart.desktop
+├── top.spelunk.kwallpaper.metainfo.xml
 └── README.md                     # This file
 ```
 
@@ -367,32 +375,26 @@ kwallpaper/
 
 This project is provided as-is for personal use.
 
-## Flatpak
-
-A Flatpak bundle is available for easy installation. To build the Flatpak:
-
-```bash
-cd flatpak
-./build.sh
-```
-
-This creates a self-contained bundle with all Python dependencies embedded. Install with:
-```bash
-flatpak install --user bundle/top.spelunk.kwallpaper.flatpak
-```
-
-**Note**: The Flatpak uses Python 3.12 (matching bundled wheel dependencies).
-
 ## Acknowledgments
 
-- **KDE Plasma** - plasma-apply-wallpaperimage and kwriteconfig5 tools
-- **Astral Library** - Accurate sunrise/sunset calculations
-- **PyQt6** - Native KDE Plasma integration and modern UI components
-- **APScheduler** - Background scheduler for continuous operation
+- **KDE Plasma** — Plasma D-Bus wallpaper API
+- **Astral Library** — Accurate sunrise/sunset calculations
+- **PyQt6** — Native KDE Plasma integration and modern UI components
+- **APScheduler** — Background scheduler for continuous operation
 
 ## Changelog
 
-### Version 1.0.0 (Current)
+### Version 1.1.0 (Current)
+- **Instant scene selection** — 1080p thumbnail pipeline with off-GUI-thread generation and decode; pre-scaled pixmap cache; no full-resolution JPEG touches on the GUI thread
+- **Background workers** — Apply/Import/Delete run in `QThreadPool` workers with busy-state UI; no more GUI freezes
+- **Module split** — the 2,700-line `wallpaper_changer.py` god module is now focused modules (`config`, `suntime`, `selection`, `themes`, `wallpaper`, `core`, `cli`, `backup`) with a compatibility facade
+- **Single source of truth for time math** — one period model in `suntime.py`, legacy per-selector quirks pinned by tests
+- **Scheduler correctness** — daily shuffle runs at local midnight via `CronTrigger` (was every 60 s); job-overlap lock; live event log in the GUI
+- **Correctness fixes** — configured lat/lon used in CLI time selection; `themes remove` deletes directories properly; scheduler status via public API; theme-aware tray icons
+- **Auto-start** — optional start-at-login and start-scheduler-on-launch
+- **Flatpak** — bundled build with embedded Python dependencies (Python 3.12, org.kde.Platform 6.9)
+
+### Version 1.0.0
 - Full GUI application with native KDE Plasma 6 integration
 - Cross-fade image preview widget
 - System tray integration
@@ -401,7 +403,3 @@ flatpak install --user bundle/top.spelunk.kwallpaper.flatpak
 - Multiple tab interface (Themes, Settings, Scheduler)
 - Configurable color scheme (system/light/dark)
 - Background wallpaper rotation
-
-### Future
-- [ ] Flatpak bundle with embedded Python dependencies
-- [ ] CLI-only version without GUI
