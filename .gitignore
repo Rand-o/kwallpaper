@@ -6,8 +6,6 @@ flatpak/bundle/
 flatpak/build/
 flatpak/build-files/
 flatpak/repo/
-flatpak/wallpaper-gui
-
 # Python
 __pycache__/
 *.py[cod]
@@ -49,8 +47,6 @@ flatpak/bundle/
 flatpak/build/
 flatpak/build-files/
 flatpak/repo/
-flatpak/wallpaper-gui
-
 # Python
 __pycache__/
 *.py[cod]
