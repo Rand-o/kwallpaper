@@ -83,17 +83,6 @@ def run_extract_command(args) -> int:
 def run_change_command(args) -> int:
     """Handle change subcommand with daily shuffler support."""
     try:
-        from kwallpaper.shuffle_list_manager import (
-            create_initial_shuffle,
-            check_and_reshuffle,
-            save_shuffle_list,
-            load_shuffle_list,
-            get_current_date,
-            check_day_passed,
-            save_theme_change_date,
-            load_theme_change_date,
-        )
-
         # Get timezone from config
         config_path = Path(args.config) if args.config else DEFAULT_CONFIG_PATH
         config = load_config(str(config_path))
@@ -121,48 +110,19 @@ def run_change_command(args) -> int:
             else:
                 print(f"Using manual theme selection: {theme_path}")
         else:
-            # Daily shuffler mode
+            # Daily shuffler mode: delegate to the shared single writer in
+            # kwallpaper.core so the CLI, GUI and scheduler all advance the
+            # same shuffle list consistently.
+            from kwallpaper.core import _pick_theme_for_shuffle
             print("Using daily shuffler")
-
             try:
-                themes = discover_themes()
+                theme_path = _pick_theme_for_shuffle(config, timezone_str)
             except FileNotFoundError as e:
                 print(f"Error: {e}", file=sys.stderr)
                 return 1
             except PermissionError as e:
                 print(f"Error: {e}", file=sys.stderr)
                 return 1
-
-            if not themes:
-                print("Error: No themes found in themes directory", file=sys.stderr)
-                return 1
-
-            # Load or create shuffle list
-            shuffle_state = load_shuffle_list()
-            shuffle_list = shuffle_state.get("shuffle_list", [])
-            current_index = shuffle_state.get("current_index", 0)
-            last_used_date = shuffle_state.get("last_used_date", "")
-
-            # Check if reshuffle is needed
-            if check_and_reshuffle(shuffle_list, current_index, last_used_date):
-                print("Reshuffling themes...")
-                theme_paths = [path for _, path in themes]
-                shuffle_list = create_initial_shuffle(theme_paths)
-                current_index = 0
-
-            # Check if a day has passed since last theme change
-            last_change_date = load_theme_change_date()
-            current_date = get_current_date(timezone_str)
-            day_changed = check_day_passed(last_change_date, current_date)
-            if day_changed:
-                print("New day detected - advancing to next theme")
-                current_index = (current_index + 1) % len(shuffle_list) if shuffle_list else 0
-                save_theme_change_date(current_date)
-
-            theme_path = shuffle_list[current_index]
-
-            # Save shuffle state
-            save_shuffle_list(shuffle_list, current_index, get_current_date(timezone_str))
 
             print(f"Selected theme: {Path(theme_path).name}")
 

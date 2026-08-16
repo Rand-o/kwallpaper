@@ -173,11 +173,22 @@ class SchedulerManager:
             today = get_current_date(config.get('timezone', 'UTC'))
             # No-op until the local date has actually changed since the last
             # theme change (midnight cron may also fire after a missed run).
+            # On first run (or after a restart) seed from the persisted
+            # shuffle state instead of today, so a restart later in the day
+            # doesn't swallow the rest of the day's shuffle.
             if self._last_change_date is None:
-                self._last_change_date = today
-                self.log("Change task: recording current date, no theme change",
-                         logging.DEBUG)
-                return
+                try:
+                    from kwallpaper.shuffle_list_manager import load_theme_change_date
+                    self._last_change_date = load_theme_change_date() or today
+                except Exception:
+                    self._last_change_date = today
+                if self._last_change_date == today:
+                    self.log("Change task: recording current date, no theme change",
+                             logging.DEBUG)
+                    return
+                self.log(f"Change task: resuming, last change was "
+                         f"{self._last_change_date}", logging.DEBUG)
+                # fall through and run the change for today
             if today == self._last_change_date:
                 self.log("Change task: same day, no theme change",
                          logging.DEBUG)

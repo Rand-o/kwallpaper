@@ -70,10 +70,25 @@ class TestChangeTaskNoOp:
     def test_first_run_records_date_without_changing(self, cfg):
         mgr = _make_manager(cfg)
         with patch.object(scheduler_module, "run_change_command") as change, \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-10"):
+             patch.object(scheduler_module, "get_current_date", return_value="2026-02-10"), \
+             patch("kwallpaper.shuffle_list_manager.load_theme_change_date",
+                   return_value="2026-02-10"):
             mgr._run_change_task()
             change.assert_not_called()
             assert mgr._last_change_date == "2026-02-10"
+
+    def test_restart_after_day_change_advances_on_first_run(self, cfg):
+        """A restart later in the day must not swallow the rest of the day:
+        the first run seeds from the persisted last_change_date and, if that
+        is an older day, immediately runs the change for today."""
+        mgr = _make_manager(cfg)
+        with patch.object(scheduler_module, "run_change_command", return_value=0) as change, \
+             patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"), \
+             patch("kwallpaper.shuffle_list_manager.load_theme_change_date",
+                   return_value="2026-02-10"):
+            mgr._run_change_task()
+            change.assert_called_once()
+            assert mgr._last_change_date == "2026-02-11"
 
     def test_same_day_is_noop(self, cfg):
         mgr = _make_manager(cfg)
