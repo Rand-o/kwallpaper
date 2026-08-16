@@ -1764,9 +1764,9 @@ def main():
     app.setApplicationName(APP_NAME)
     app.setApplicationVersion(APP_VERSION)
     app.setOrganizationName(ORG_NAME)
-    app.setDesktopFileName("org.kde.kwallpaper")
+    app.setDesktopFileName("top.spelunk.kwallpaper")
     app.setWindowIcon(
-        QIcon.fromTheme("preferences-desktop-wallpaper"))
+        get_icon_for_theme("system"))
     app.setQuitOnLastWindowClosed(False)
 
     # Snapshot the system palette before any overrides
