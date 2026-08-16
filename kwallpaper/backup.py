@@ -4,6 +4,10 @@ kWallpaper daily schedule backup.
 
 Persists the previous day's astral schedule so the app can still classify
 time-of-day when Astral is unavailable or fails at runtime.
+
+Exactly one backup file is kept at a time: ``schedule_backup.json``.  It
+always contains the most recent successful schedule (tagged with the date
+it was computed for) and is overwritten on every save.
 """
 
 import json
@@ -16,15 +20,22 @@ logger = logging.getLogger(__name__)
 
 from kwallpaper.config import DEFAULT_SCHEDULE_BACKUP_DIR
 
+#: Single rolling backup file (overwritten on every save).
+BACKUP_FILE_NAME = "schedule_backup.json"
+
 
 def get_daily_backup_path() -> Path:
-    """Get the path to previous day's schedule backup file."""
-    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-    return DEFAULT_SCHEDULE_BACKUP_DIR / f"schedule_{yesterday}.json"
+    """Get the path to the (single, rolling) schedule backup file."""
+    return DEFAULT_SCHEDULE_BACKUP_DIR / BACKUP_FILE_NAME
 
 
 def load_daily_backup_schedule() -> Optional[Dict[str, Any]]:
-    """Load previous day's backup schedule if it exists and is valid."""
+    """Load the most recent backup schedule if it exists and is valid.
+
+    The backup is only useful for the *previous* day's sun times, so a
+    backup whose date is older than yesterday is ignored (treated as
+    missing).
+    """
     backup_path = get_daily_backup_path()
     if not backup_path.exists():
         return None
@@ -32,19 +43,24 @@ def load_daily_backup_schedule() -> Optional[Dict[str, Any]]:
     try:
         with open(backup_path, 'r') as f:
             backup = json.load(f)
-
-        # Validate required fields
-        required = ['dawn', 'sunrise', 'sunset', 'dusk', 'time_of_day', 'previous_date']
-        if not all(k in backup for k in required):
-            return None
-
-        # Validate JSON structure
-        if not isinstance(backup, dict):
-            return None
-
-        return backup
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except (json.JSONDecodeError, OSError):
         return None
+
+    # Validate JSON structure
+    if not isinstance(backup, dict):
+        return None
+
+    # Validate required fields
+    required = ['dawn', 'sunrise', 'sunset', 'dusk', 'time_of_day', 'previous_date']
+    if not all(k in backup for k in required):
+        return None
+
+    # Only the previous day's schedule is usable as a fallback.
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    if backup.get('previous_date') != yesterday:
+        return None
+
+    return backup
 
 
 def save_daily_backup_schedule(
@@ -54,7 +70,11 @@ def save_daily_backup_schedule(
     dusk: Optional[datetime],
     time_of_day: str
 ) -> None:
-    """Save previous day's schedule to backup file with 'previous_date' field."""
+    """Save the current schedule to the single rolling backup file.
+
+    Overwrites any previous backup; the file is tagged with yesterday's
+    date (the schedule it stands in for when Astral is unavailable).
+    """
     DEFAULT_SCHEDULE_BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 
     yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
