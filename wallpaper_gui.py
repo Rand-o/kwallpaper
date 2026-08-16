@@ -1176,13 +1176,19 @@ class SettingsPage(QWidget):
                 w.sched.scheduler.reload_cycle_interval()
 
             autostart_dir = Path.home() / ".config" / "autostart"
-            autostart_file = autostart_dir / "org.kde.kwallpaper.desktop"
+            autostart_file = autostart_dir / "top.spelunk.kwallpaper.desktop"
             if self.autostart.isChecked():
                 autostart_dir.mkdir(parents=True, exist_ok=True)
-                source_file = Path(__file__).parent / "autostart.desktop"
-                if source_file.exists():
-                    import shutil
-                    shutil.copy2(str(source_file), str(autostart_file))
+                autostart_file.write_text(
+                    "[Desktop Entry]\n"
+                    "Type=Application\n"
+                    "Exec=flatpak run top.spelunk.kwallpaper\n"
+                    "Hidden=false\n"
+                    "NoDisplay=false\n"
+                    "X-GNOME-Autostart-enabled=true\n"
+                    "Name=kwallpaper\n"
+                    "Comment=Start kwallpaper scheduler on login\n"
+                )
             else:
                 if autostart_file.exists():
                     autostart_file.unlink()
@@ -1210,15 +1216,21 @@ class SettingsPage(QWidget):
 
     def _on_autostart(self, enabled: bool):
         autostart_dir = Path.home() / ".config" / "autostart"
-        autostart_file = autostart_dir / "org.kde.kwallpaper.desktop"
-        
+        autostart_file = autostart_dir / "top.spelunk.kwallpaper.desktop"
+
         if enabled:
             autostart_dir.mkdir(parents=True, exist_ok=True)
-            source_file = Path(__file__).parent / "autostart.desktop"
-            if source_file.exists():
-                import shutil
-                shutil.copy2(str(source_file), str(autostart_file))
-                logger.info("Autostart enabled")
+            autostart_file.write_text(
+                "[Desktop Entry]\n"
+                "Type=Application\n"
+                "Exec=flatpak run top.spelunk.kwallpaper\n"
+                "Hidden=false\n"
+                "NoDisplay=false\n"
+                "X-GNOME-Autostart-enabled=true\n"
+                "Name=kwallpaper\n"
+                "Comment=Start kwallpaper scheduler on login\n"
+            )
+            logger.info("Autostart enabled")
         else:
             if autostart_file.exists():
                 autostart_file.unlink()

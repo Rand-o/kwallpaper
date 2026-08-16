@@ -1,8 +1,8 @@
 [Desktop Entry]
 Type=Application
-Exec=wallpaper-gui --start-scheduler
+Exec=flatpak run top.spelunk.kwallpaper
 Hidden=false
 NoDisplay=false
 X-GNOME-Autostart-enabled=true
-Name=kwallpaper-autostart
+Name=kwallpaper
 Comment=Start kwallpaper scheduler on login
