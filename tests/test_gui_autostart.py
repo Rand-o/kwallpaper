@@ -18,13 +18,13 @@ def window(app, tmp_path):
     cfg = tmp_path / "config.json"
     cfg.write_text("""{
       "location": {"latitude": 35.0, "longitude": -112.0, "timezone": "UTC"},
-      "interval": 60,
-      "retry_attempts": 3,
-      "retry_delay": 5,
       "scheduling": {
+        "cycle_interval": 60,
         "daily_shuffle_enabled": true,
-        "run_cycle": true,
-        "auto_start_on_launch": true
+        "run_cycle": true
+      },
+      "autostart": {
+        "start_scheduler_on_launch": true
       }
     }""")
     w = wallpaper_gui.WallpaperChangerWindow(config_path=str(cfg))
@@ -48,10 +48,8 @@ class TestAutoStart:
         # Override config to disable auto-start
         with patch("wallpaper_gui.load_config") as load_cfg:
             load_cfg.return_value = {
-                "scheduling": {
-                    "auto_start_on_launch": False,
-                    "run_cycle": True
-                }
+                "autostart": {"start_scheduler_on_launch": False},
+                "scheduling": {"run_cycle": True}
             }
             with patch.object(QTimer, "singleShot") as single_shot:
                 window._maybe_start_scheduler()
@@ -60,10 +58,8 @@ class TestAutoStart:
     def test_maybe_start_scheduler_run_cycle_disabled(self, window):
         with patch("wallpaper_gui.load_config") as load_cfg:
             load_cfg.return_value = {
-                "scheduling": {
-                    "auto_start_on_launch": True,
-                    "run_cycle": False
-                }
+                "autostart": {"start_scheduler_on_launch": True},
+                "scheduling": {"run_cycle": False}
             }
             with patch.object(QTimer, "singleShot") as single_shot:
                 window._maybe_start_scheduler()

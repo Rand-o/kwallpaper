@@ -130,10 +130,7 @@ def test_detect_time_of_day_sun_no_location():
     # Create a temporary config without location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {}  # Empty location
         }, f)
@@ -165,10 +162,7 @@ def test_detect_time_of_day_sun_city_name():
     # Create a temporary config with city name
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "city": "New York",
@@ -203,10 +197,7 @@ def test_detect_time_of_day_sun_latitude_longitude():
     # Create a temporary config with coordinates
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -242,10 +233,7 @@ def test_detect_time_of_day_sun_polar_regions():
     # Create a temporary config for polar region (midnight sun)
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 78.0,  # Near the Arctic Circle
@@ -282,10 +270,7 @@ def test_detect_time_of_day_sun_civil_twilight():
     # Create a temporary config
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "city": "London",
@@ -699,10 +684,7 @@ def test_detect_time_of_day_sun_four_periods_with_location():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "city": "Test City",
@@ -748,10 +730,7 @@ def test_detect_time_of_day_sun_night_before_dawn():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -801,10 +780,7 @@ def test_detect_time_of_day_sun_sunrise_between_dawn_and_sunrise():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -853,10 +829,7 @@ def test_detect_time_of_day_sun_day_between_sunrise_and_sunset():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -896,10 +869,7 @@ def test_detect_time_of_day_sun_sunset_between_sunset_and_dusk():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -946,10 +916,7 @@ def test_detect_time_of_day_sun_night_after_dusk():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 40.7128,
@@ -998,10 +965,7 @@ def test_detect_time_of_day_sun_boundary_dawn_equals_sunrise():
     # Create a temporary config with location
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 0.0,  # Equator where dawn and sunrise are close
@@ -1048,10 +1012,7 @@ def test_detect_time_of_day_sun_timezone_aware_comparison():
     # Create a temporary config with non-UTC timezone
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 51.5074,  # London
@@ -1089,10 +1050,7 @@ def test_detect_time_of_day_sun_polar_region_none_dawn():
     # Create a temporary config for polar region
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5,
-            
+                                                
             
             "location": {
                 "latitude": 78.0,  # Near Arctic Circle

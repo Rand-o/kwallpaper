@@ -1126,21 +1126,22 @@ class SettingsPage(QWidget):
             c   = load_config(self._cfg)
             s   = c.get("scheduling", {})
             loc = c.get("location", {})
-            self.interval.setValue(s.get("interval", 60))
+            app_cfg = c.get("autostart", {})
+            self.interval.setValue(s.get("cycle_interval", 60))
             self.run_cycle.setChecked(s.get("run_cycle", True))
             self.daily_shuffle.setChecked(
                 s.get("daily_shuffle_enabled", True))
             self.auto_start_scheduler.setChecked(
-                s.get("auto_start_on_launch", False))
+                app_cfg.get("start_scheduler_on_launch", True))
             self.timezone.setText(loc.get("timezone", "America/Phoenix"))
             self.lat.setValue(loc.get("latitude",  33.4484))
             self.lon.setValue(loc.get("longitude", -112.074))
-            mode = c.get("application", {}).get("theme_mode", "system")
+            mode = c.get("appearance", {}).get("theme_mode", "system")
             idx  = {"system": 0, "light": 1, "dark": 2}.get(mode, 0)
             self.scheme.blockSignals(True)
             self.scheme.setCurrentIndex(idx)
             self.scheme.blockSignals(False)
-            autostart = c.get("application", {}).get("autostart", False)
+            autostart = app_cfg.get("enabled", False)
             self.autostart.setChecked(autostart)
         except Exception as e:
             logger.warning(f"Config load: {e}")
@@ -1149,10 +1150,9 @@ class SettingsPage(QWidget):
         try:
             c = load_config(self._cfg)
             c["scheduling"] = {
-                "interval":              self.interval.value(),
+                "cycle_interval":        self.interval.value(),
                 "run_cycle":             self.run_cycle.isChecked(),
                 "daily_shuffle_enabled": self.daily_shuffle.isChecked(),
-                "auto_start_on_launch":  self.auto_start_scheduler.isChecked(),
             }
             c["location"] = {
                 "timezone":  self.timezone.text(),
@@ -1160,9 +1160,13 @@ class SettingsPage(QWidget):
                 "longitude": self.lon.value(),
             }
             scheme_map = {0: "system", 1: "light", 2: "dark"}
-            c.setdefault("application", {})["theme_mode"] = \
-                scheme_map.get(self.scheme.currentIndex(), "system")
-            c["application"].setdefault("autostart", self.autostart.isChecked())
+            c["appearance"] = {
+                "theme_mode": scheme_map.get(self.scheme.currentIndex(), "system"),
+            }
+            c["autostart"] = {
+                "enabled":                 self.autostart.isChecked(),
+                "start_scheduler_on_launch": self.auto_start_scheduler.isChecked(),
+            }
             save_config(self._cfg, c)
 
             # If the scheduler is running, apply the new cycle interval
@@ -1197,7 +1201,7 @@ class SettingsPage(QWidget):
         # Persist the preference immediately
         try:
             c = load_config(self._cfg)
-            c.setdefault("application", {})["theme_mode"] = name
+            c.setdefault("appearance", {})["theme_mode"] = name
             save_config(self._cfg, c)
             # Refresh window and tray icons based on theme
             self._refresh_icons()
@@ -1462,7 +1466,7 @@ class WallpaperChangerWindow(QMainWindow):
         """The configured theme mode ('system', 'light', or 'dark')."""
         try:
             c = load_config(self._cfg)
-            return c.get("application", {}).get("theme_mode", "system")
+            return c.get("appearance", {}).get("theme_mode", "system")
         except Exception:
             return "system"
 
@@ -1652,7 +1656,7 @@ class WallpaperChangerWindow(QMainWindow):
         """Read the saved colour scheme from config and apply it."""
         try:
             c    = load_config(self._cfg)
-            mode = c.get("application", {}).get(
+            mode = c.get("appearance", {}).get(
                 "theme_mode", "system")
             apply_color_scheme(mode)
             idx = {"system": 0, "light": 1, "dark": 2}.get(mode, 0)
@@ -1717,8 +1721,8 @@ class WallpaperChangerWindow(QMainWindow):
         """Auto-start scheduler if enabled in config."""
         try:
             config = load_config(self._cfg)
-            auto_start = config.get('scheduling', {}).get(
-                'auto_start_on_launch', False)
+            auto_start = config.get('autostart', {}).get(
+                'start_scheduler_on_launch', True)
             run_cycle = config.get('scheduling', {}).get('run_cycle', True)
             if auto_start and run_cycle:
                 logger.info("Auto-starting scheduler on launch")

@@ -17,10 +17,7 @@ def window(app, tmp_path):
     cfg = tmp_path / "config.json"
     cfg.write_text("""{
       "location": {"latitude": 35.0, "longitude": -112.0, "timezone": "UTC"},
-      "interval": 60,
-      "retry_attempts": 3,
-      "retry_delay": 5,
-      "scheduling": {"daily_shuffle_enabled": true, "run_cycle": true}
+      "scheduling": {"cycle_interval": 60, "daily_shuffle_enabled": true, "run_cycle": true}
     }""")
     w = wallpaper_gui.WallpaperChangerWindow(config_path=str(cfg))
     w.show()

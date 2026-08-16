@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 # Import the config functions
-from kwallpaper.wallpaper_changer import load_config, save_config, DEFAULT_CONFIG
+from kwallpaper.wallpaper_changer import load_config, save_config
+from kwallpaper.config import _default_config
 
 # Import GUI components
 try:
@@ -25,7 +26,7 @@ except ImportError:
 def temp_config():
     """Create a temporary config file for testing."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(DEFAULT_CONFIG, f)
+        json.dump(_default_config(), f)
         temp_path = f.name
     yield temp_path
     os.unlink(temp_path)

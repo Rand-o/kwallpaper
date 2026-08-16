@@ -33,6 +33,7 @@ from kwallpaper.config import (
     load_config,
     save_config,
     validate_config,
+    normalize_config,
 )
 
 from kwallpaper.backup import (

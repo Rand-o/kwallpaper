@@ -223,7 +223,8 @@ def run_change_command(args) -> int:
         if args.monitor:
             print(f"Starting continuous monitoring mode...")
             print(f"Theme: {Path(theme_path).name}")
-            print(f"Time-of-day intervals: {config['interval']} seconds each")
+            monitor_interval = config['scheduling']['cycle_interval']
+            print(f"Time-of-day check interval: {monitor_interval} seconds")
             print("Press Ctrl+C to stop")
             print("-" * 60)
 
@@ -255,7 +256,7 @@ def run_change_command(args) -> int:
                         else:
                             print(f"\r[{now}] {time_of_day} - loading...", end="", flush=True)
 
-                    time.sleep(config['interval'])
+                    time.sleep(monitor_interval)
 
                 except KeyboardInterrupt:
                     print("\n\nStopping monitoring mode...")

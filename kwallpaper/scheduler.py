@@ -121,11 +121,10 @@ class SchedulerManager:
             config = load_config(self.config_path)
             scheduling = config.get('scheduling', {})
             location = config.get('location', {})
-            # The cycle interval is ``scheduling.interval`` (what the GUI
-            # Settings tab edits).  The top-level ``interval`` is a legacy
-            # field used only by the CLI ``--monitor`` loop.
+            # ``load_config`` normalizes legacy configs, so the cycle
+            # interval is always ``scheduling.cycle_interval``.
             return {
-                'interval': scheduling.get('interval', 60),
+                'interval': scheduling.get('cycle_interval', 60),
                 'daily_shuffle_enabled': scheduling.get('daily_shuffle_enabled', True),
                 'run_cycle': scheduling.get('run_cycle', True),
                 'timezone': location.get('timezone', 'UTC'),
@@ -292,7 +291,7 @@ class SchedulerManager:
             return False
 
     def reload_cycle_interval(self) -> bool:
-        """Re-read ``scheduling.interval`` from config and reschedule the
+        """Re-read ``scheduling.cycle_interval`` from config and reschedule the
         cycle task, so interval changes made in the GUI Settings tab take
         effect without a full scheduler restart."""
         if not self._is_running or self.scheduler is None:

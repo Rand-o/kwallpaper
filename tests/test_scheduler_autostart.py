@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch, MagicMock
 from pathlib import Path
 
 # Import the config functions
-from kwallpaper.wallpaper_changer import load_config, save_config, DEFAULT_CONFIG
+from kwallpaper.wallpaper_changer import load_config, save_config
+from kwallpaper.config import _default_config
 
 # Import GUI components
 try:
@@ -25,7 +26,7 @@ except ImportError:
 def temp_config():
     """Create a temporary config file for testing."""
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-        json.dump(DEFAULT_CONFIG, f)
+        json.dump(_default_config(), f)
         temp_path = f.name
     yield temp_path
     os.unlink(temp_path)
@@ -43,41 +44,40 @@ class TestAutoStartConfig:
     """Test auto_start_on_launch config schema and validation."""
     
     def test_default_config_has_auto_start(self):
-        """Test that DEFAULT_CONFIG includes auto_start_on_launch."""
-        assert 'scheduling' in DEFAULT_CONFIG
-        assert 'auto_start_on_launch' in DEFAULT_CONFIG['scheduling']
-        assert DEFAULT_CONFIG['scheduling']['auto_start_on_launch'] is False
+        """Test that the default config includes the scheduler auto-start flag."""
+        cfg = _default_config()
+        assert 'autostart' in cfg
+        assert 'start_scheduler_on_launch' in cfg['autostart']
+        assert cfg['autostart']['start_scheduler_on_launch'] is True
     
     def test_load_config_with_auto_start_true(self, temp_config):
         """Test loading config with auto_start_on_launch=True."""
         with open(temp_config, 'w') as f:
-            config = DEFAULT_CONFIG.copy()
-            config['scheduling'] = config['scheduling'].copy()
-            config['scheduling']['auto_start_on_launch'] = True
+            config = _default_config()
+            config['autostart']['start_scheduler_on_launch'] = True
             json.dump(config, f)
         
         loaded = load_config(temp_config)
-        assert loaded['scheduling']['auto_start_on_launch'] is True
+        assert loaded['autostart']['start_scheduler_on_launch'] is True
     
     def test_load_config_with_auto_start_false(self, temp_config):
         """Test loading config with auto_start_on_launch=False."""
         with open(temp_config, 'w') as f:
-            config = DEFAULT_CONFIG.copy()
-            config['scheduling'] = config['scheduling'].copy()
-            config['scheduling']['auto_start_on_launch'] = False
+            config = _default_config()
+            config['autostart']['start_scheduler_on_launch'] = False
             json.dump(config, f)
         
         loaded = load_config(temp_config)
-        assert loaded['scheduling']['auto_start_on_launch'] is False
+        assert loaded['autostart']['start_scheduler_on_launch'] is False
     
     def test_save_config_with_auto_start(self, temp_config):
         """Test saving config with auto_start_on_launch."""
         config = load_config(temp_config)
-        config['scheduling']['auto_start_on_launch'] = True
+        config['autostart']['start_scheduler_on_launch'] = True
         save_config(temp_config, config)
         
         loaded = load_config(temp_config)
-        assert loaded['scheduling']['auto_start_on_launch'] is True
+        assert loaded['autostart']['start_scheduler_on_launch'] is True
 
 
 @pytest.mark.skipif(not PYQT6_AVAILABLE, reason="PyQt6 not available")
@@ -102,9 +102,8 @@ class TestSettingsPageAutoStart:
     def test_checkbox_loads_true_value(self, app, temp_config):
         """Test checkbox loads True value from config."""
         with open(temp_config, 'w') as f:
-            config = DEFAULT_CONFIG.copy()
-            config['scheduling'] = config['scheduling'].copy()
-            config['scheduling']['auto_start_on_launch'] = True
+            config = _default_config()
+            config['autostart']['start_scheduler_on_launch'] = True
             json.dump(config, f)
         
         page = SettingsPage(temp_config)
@@ -120,9 +119,8 @@ class TestMaybeStartScheduler:
     def test_scheduler_not_started_when_disabled(self, app, temp_config):
         """Test scheduler is not auto-started when auto_start_on_launch=False."""
         with open(temp_config, 'w') as f:
-            config = DEFAULT_CONFIG.copy()
-            config['scheduling'] = config['scheduling'].copy()
-            config['scheduling']['auto_start_on_launch'] = False
+            config = _default_config()
+            config['autostart']['start_scheduler_on_launch'] = False
             json.dump(config, f)
         
         with patch('wallpaper_gui.QTimer') as mock_timer:
@@ -137,9 +135,8 @@ class TestMaybeStartScheduler:
     def test_scheduler_starts_when_enabled(self, app, temp_config):
         """Test scheduler is auto-started when auto_start_on_launch=True."""
         with open(temp_config, 'w') as f:
-            config = DEFAULT_CONFIG.copy()
-            config['scheduling'] = config['scheduling'].copy()
-            config['scheduling']['auto_start_on_launch'] = True
+            config = _default_config()
+            config['autostart']['start_scheduler_on_launch'] = True
             json.dump(config, f)
         
         with patch('wallpaper_gui.QTimer') as mock_timer:

@@ -105,10 +105,9 @@ def test_delete_theme_refuses_outside_themes(tmp_path, monkeypatch):
 def test_apply_theme_success(theme_dir, tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({
-        "interval": 60, "retry_attempts": 3, "retry_delay": 2,
         "location": {"timezone": "America/Phoenix",
                      "latitude": 33.4, "longitude": -112.0},
-        "scheduling": {"interval": 60, "run_cycle": True,
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
                        "daily_shuffle_enabled": False},
     }))
     monkeypatch.setattr(core, "set_wallpaper", lambda p: True)
@@ -131,8 +130,7 @@ def test_apply_theme_success(theme_dir, tmp_path, monkeypatch):
 def test_apply_theme_wallpaper_failure(theme_dir, tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({
-        "interval": 60, "retry_attempts": 3, "retry_delay": 2,
-        "location": {"timezone": "America/Phoenix"},
+                "location": {"timezone": "America/Phoenix"},
     }))
     monkeypatch.setattr(core, "set_wallpaper", lambda p: False)
     monkeypatch.setattr(core, "detect_time_of_day_sun",
@@ -150,8 +148,7 @@ def test_apply_theme_wallpaper_failure(theme_dir, tmp_path, monkeypatch):
 def test_apply_theme_unknown_theme(tmp_path, monkeypatch):
     cfg = tmp_path / "config.json"
     cfg.write_text(json.dumps({
-        "interval": 60, "retry_attempts": 3, "retry_delay": 2,
-        "location": {"timezone": "America/Phoenix"},
+                "location": {"timezone": "America/Phoenix"},
     }))
     monkeypatch.setattr(core, "load_config",
                         lambda p: json.loads(cfg.read_text()))

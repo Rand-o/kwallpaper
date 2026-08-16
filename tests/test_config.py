@@ -10,18 +10,19 @@ def test_load_config_valid():
 
     with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
         json.dump({
-            "interval": 5400,
-            "retry_attempts": 3,
-            "retry_delay": 5
+            "version": 2,
+            "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                           "daily_shuffle_enabled": True},
         }, f)
         temp_path = f.name
 
     try:
         config = load_config(temp_path)
         assert isinstance(config, dict)
-        assert "interval" in config
-        assert "retry_attempts" in config
-        assert "retry_delay" in config
+        assert config["scheduling"]["cycle_interval"] == 60
+        # normalization fills in missing sections from defaults
+        assert config["location"]["timezone"]
+        assert config["appearance"]["theme_mode"] == "system"
     finally:
         os.unlink(temp_path)
 
