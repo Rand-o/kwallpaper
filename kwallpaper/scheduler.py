@@ -5,12 +5,10 @@ Scheduler module for background task management.
 Tasks:
 
 - ``cycle_task``: interval-based (every ``scheduling.interval`` seconds).
-  Re-applies the time-appropriate image of the current theme.
-- ``change_task``: daily shuffle.  Scheduled at local midnight (CronTrigger)
-  so it no longer hammers gdbus every ``interval`` seconds alongside
-  cycle_task.  The job body is also a no-op unless the local date has
-  actually changed since the last theme change, so a missed midnight
-  (suspend/laptop sleep) is picked up on the next run.
+  Re-applies the time-appropriate image of the current theme, and performs
+  the daily shuffle when the local date differs from the persisted
+  ``last_change_date`` (so a missed midnight — suspend, reboot, app not
+  running at 00:00 — is picked up on the next cycle run).
 
 A re-entrant lock guarantees cycle and change can never overlap.  Per-run
 results are logged via ``logging`` and, when a callback is installed,
@@ -26,18 +24,15 @@ from typing import Optional, Callable, Any
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
-    from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
     APSCHEDULER_AVAILABLE = True
 except ImportError:
     APSCHEDULER_AVAILABLE = False
     BackgroundScheduler = None
-    CronTrigger = None
     IntervalTrigger = None
 
 from kwallpaper.config import load_config, DEFAULT_CONFIG_PATH
-from kwallpaper.cli import run_change_command, run_cycle_command
-from kwallpaper.shuffle_list_manager import get_current_date
+from kwallpaper.cli import run_cycle_command
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +97,6 @@ class SchedulerManager:
         self._is_running = False
         self._tasks: dict = {}
         self._lock = threading.Lock()
-        self._last_change_date: Optional[str] = None
         self.log_callback: Optional[Callable[[str], None]] = None
 
     # ── logging ──────────────────────────────────────────────────────────
@@ -163,56 +157,6 @@ class SchedulerManager:
         finally:
             self._lock.release()
 
-    def _run_change_task(self) -> None:
-        if not self._lock.acquire(blocking=False):
-            self.log("Change task skipped: previous run still in progress",
-                     logging.DEBUG)
-            return
-        try:
-            config = self._get_config()
-            today = get_current_date(config.get('timezone', 'UTC'))
-            # No-op until the local date has actually changed since the last
-            # theme change (midnight cron may also fire after a missed run).
-            # On first run (or after a restart) seed from the persisted
-            # shuffle state instead of today, so a restart later in the day
-            # doesn't swallow the rest of the day's shuffle.
-            if self._last_change_date is None:
-                try:
-                    from kwallpaper.shuffle_list_manager import load_theme_change_date
-                    self._last_change_date = load_theme_change_date() or today
-                except Exception:
-                    self._last_change_date = today
-                if self._last_change_date == today:
-                    self.log("Change task: recording current date, no theme change",
-                             logging.DEBUG)
-                    return
-                self.log(f"Change task: resuming, last change was "
-                         f"{self._last_change_date}", logging.DEBUG)
-                # fall through and run the change for today
-            if today == self._last_change_date:
-                self.log("Change task: same day, no theme change",
-                         logging.DEBUG)
-                return
-
-            class MockArgs:
-                theme_path = None
-                config = self.config_path
-                time = None
-                monitor = False
-            result, output = _run_cli_quietly(run_change_command, MockArgs())
-            if result != 0:
-                detail = f": {output}" if output else ""
-                self.log(f"Change task failed with exit code {result}{detail}",
-                         logging.ERROR)
-            else:
-                self._last_change_date = today
-                self.log(f"Change task completed (new day: {today})")
-        except Exception as e:
-            self.log(f"Change task error: {e}", logging.ERROR)
-            logger.debug("Change task traceback", exc_info=True)
-        finally:
-            self._lock.release()
-
     # ── lifecycle ────────────────────────────────────────────────────────
     def start(self) -> bool:
         if not APSCHEDULER_AVAILABLE:
@@ -243,25 +187,8 @@ class SchedulerManager:
                     replace_existing=True
                 )
                 self._tasks['cycle'] = {'interval': interval, 'type': 'interval'}
-                self.log(f"Added cycle task: runs every {interval} seconds")
-
-            # Daily shuffle at local midnight (no-op if the day hasn't
-            # changed, so a missed midnight is picked up next run).
-            if config.get('daily_shuffle_enabled', True):
-                self.scheduler.add_job(
-                    self._run_change_task,
-                    trigger=CronTrigger(hour=0, minute=0,
-                                        timezone=config.get('timezone', 'UTC')),
-                    id='change_task',
-                    name='Daily Theme Change Task',
-                    replace_existing=True
-                )
-                self._tasks['change'] = {
-                    'interval': None,
-                    'type': 'cron',
-                    'schedule': 'daily at 00:00',
-                }
-                self.log("Added change task: daily at local midnight")
+                self.log(f"Added cycle task: runs every {interval} seconds"
+                         " (includes daily shuffle check)")
 
             self.scheduler.start()
             # Check if at least one task was added

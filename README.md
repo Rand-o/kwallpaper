@@ -34,8 +34,9 @@ Works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwin
 
 ### Background scheduler
 - `cycle_task` — interval-based (default every 60 s), re-applies the correct image for the current time-of-day.
-- `change_task` — daily theme shuffle, scheduled at **local midnight** via `CronTrigger` (no longer fires every interval).
-- A lock prevents the two jobs from overlapping; every run is logged to the GUI event log.
+- Daily theme shuffle — checked on every cycle run: if the local date differs from the persisted `last_change_date`, the shuffler advances to the next theme and applies it. No midnight cron job, so a missed midnight (suspend, reboot, app not running at 00:00) is picked up on the next cycle run.
+- Shuffle state (`shuffle-list.json`) is only persisted after the wallpaper change succeeds, so a failed change retries the same theme instead of skipping it.
+- A lock prevents overlapping runs; every run is logged to the GUI event log.
 - Daily shuffle list management with atomic single-writer state (`shuffle-list.json`).
 
 ## Architecture
@@ -389,7 +390,7 @@ This project is provided as-is for personal use.
 - **Background workers** — Apply/Import/Delete run in `QThreadPool` workers with busy-state UI; no more GUI freezes
 - **Module split** — the 2,700-line `wallpaper_changer.py` god module is now focused modules (`config`, `suntime`, `selection`, `themes`, `wallpaper`, `core`, `cli`, `backup`) with a compatibility facade
 - **Single source of truth for time math** — one period model in `suntime.py`, legacy per-selector quirks pinned by tests
-- **Scheduler correctness** — daily shuffle runs at local midnight via `CronTrigger` (was every 60 s); job-overlap lock; live event log in the GUI
+- **Scheduler correctness** — daily shuffle is checked on every cycle run (date change since `last_change_date`), so missed midnights are picked up automatically; job-overlap lock; live event log in the GUI
 - **Correctness fixes** — configured lat/lon used in CLI time selection; `themes remove` deletes directories properly; scheduler status via public API; theme-aware tray icons
 - **Auto-start** — optional start-at-login and start-scheduler-on-launch
 - **Flatpak** — bundled build with embedded Python dependencies (Python 3.12, org.kde.Platform 6.9)

@@ -20,6 +20,11 @@ from kwallpaper.config import (
     DEFAULT_THEMES_DIR,
     load_config,
 )
+from kwallpaper.shuffle_list_manager import (
+    check_day_passed,
+    get_current_date,
+    load_theme_change_date,
+)
 from kwallpaper.suntime import (
     TIME_CATEGORIES,
     detect_time_of_day_for_time,
@@ -236,6 +241,16 @@ def run_change_command(args) -> int:
         print(f"Changing wallpaper to: {image_path}")
 
         if change_wallpaper(image_path):
+            # Persist shuffle state only now that the wallpaper is up, so a
+            # failed change doesn't advance the list (the next run retries
+            # the same theme instead of skipping it).
+            if not args.theme_path:
+                from kwallpaper.core import commit_shuffle_state
+                try:
+                    commit_shuffle_state(config, timezone_str)
+                except Exception as e:
+                    print(f"Warning: failed to persist shuffle state: {e}",
+                          file=sys.stderr)
             print("Wallpaper changed successfully!")
             return 0
         else:
@@ -257,7 +272,14 @@ def run_change_command(args) -> int:
 # ============================================================================
 
 def run_cycle_command(args) -> int:
-    """Cycle to next image in current theme based on current time."""
+    """Cycle to next image in current theme based on current time.
+
+    Also performs the daily theme shuffle: if the local date differs from
+    the persisted ``last_change_date``, the shuffler advances to the next
+    theme and applies it.  Checking this every cycle (instead of a
+    midnight cron job) means a missed midnight (suspend, reboot, app not
+    running at 00:00) is picked up on the next cycle run.
+    """
     try:
         # Get config path
         if args.config:
@@ -266,6 +288,15 @@ def run_cycle_command(args) -> int:
             config_path_obj = DEFAULT_CONFIG_PATH
 
         config = load_config(str(config_path_obj))
+
+        # Daily shuffle check: if a new day has started since the last
+        # theme change, shuffle to the next theme and apply it.
+        if config.get('scheduling', {}).get('daily_shuffle_enabled', True):
+            timezone_str = config.get('location', {}).get('timezone', 'UTC')
+            if check_day_passed(load_theme_change_date(),
+                                get_current_date(timezone_str)):
+                print("New day detected - shuffling to next theme")
+                return run_change_command(args)
 
         # Get current wallpaper path
         current_wallpaper = get_current_wallpaper()

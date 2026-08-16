@@ -155,3 +155,89 @@ def test_apply_theme_unknown_theme(tmp_path, monkeypatch):
     result = core.apply_theme("NoSuchTheme", str(cfg))
     assert not result.success
     assert "not found" in result.message
+
+
+def test_apply_theme_shuffler_mode_commits_state_after_wallpaper(
+        theme_dir, tmp_path, monkeypatch):
+    """Shuffler-mode apply must persist shuffle state only after the
+    wallpaper is actually set (a failed set must not advance the list)."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "location": {"timezone": "America/Phoenix",
+                     "latitude": 33.4, "longitude": -112.0},
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                       "daily_shuffle_enabled": True},
+    }))
+    monkeypatch.setattr(core, "set_wallpaper", lambda p: True)
+    monkeypatch.setattr(core, "detect_time_of_day_sun", lambda *a, **k: "day")
+    monkeypatch.setattr(core, "select_image_for_time_cli",
+                        lambda theme, cfg_path: str(theme_dir / "test_3.jpg"))
+    monkeypatch.setattr(core, "load_config",
+                        lambda p: json.loads(cfg.read_text()))
+    monkeypatch.setattr(core, "save_config", lambda p, c: None)
+    committed = []
+    monkeypatch.setattr(core, "commit_shuffle_state",
+                        lambda config, tz: committed.append(1))
+
+    result = core.apply_theme(None, str(cfg))
+    assert result.success
+    assert committed == [1]
+
+
+def test_apply_theme_shuffler_mode_no_commit_on_wallpaper_failure(
+        theme_dir, tmp_path, monkeypatch):
+    """A failed wallpaper change must not persist shuffle state: the next
+    run retries the same theme instead of skipping it."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "location": {"timezone": "America/Phoenix",
+                     "latitude": 33.4, "longitude": -112.0},
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                       "daily_shuffle_enabled": True},
+    }))
+    monkeypatch.setattr(core, "set_wallpaper", lambda p: False)
+    monkeypatch.setattr(core, "detect_time_of_day_sun", lambda *a, **k: "day")
+    monkeypatch.setattr(core, "select_image_for_time_cli",
+                        lambda theme, cfg_path: str(theme_dir / "test_3.jpg"))
+    monkeypatch.setattr(core, "load_config",
+                        lambda p: json.loads(cfg.read_text()))
+    committed = []
+    monkeypatch.setattr(core, "commit_shuffle_state",
+                        lambda config, tz: committed.append(1))
+
+    result = core.apply_theme(None, str(cfg))
+    assert not result.success
+    assert "Failed to change wallpaper" in result.message
+    assert committed == []
+
+
+def test_commit_shuffle_state_advances_once_per_day(tmp_path, monkeypatch):
+    """commit_shuffle_state advances the index and records today's date on
+    a new day, and is a no-op (no double advance) when run again the same
+    day."""
+    state = {"shuffle_list": ["/t/a", "/t/b", "/t/c"], "current_index": 0,
+             "last_used_date": "2026-08-15", "last_change_date": "2026-08-15"}
+    saves = []
+    monkeypatch.setattr(core, "load_shuffle_list",
+                        lambda shuffle_path=None: dict(state))
+    monkeypatch.setattr(core, "save_shuffle_list",
+                        lambda lst, idx, date, shuffle_path=None:
+                        saves.append((list(lst), idx, date)))
+    monkeypatch.setattr(core, "load_theme_change_date",
+                        lambda shuffle_path=None: "2026-08-15")
+    monkeypatch.setattr(core, "save_theme_change_date", lambda *a, **k: None)
+    monkeypatch.setattr(core, "get_current_date", lambda tz: "2026-08-16")
+    monkeypatch.setattr(core, "discover_themes",
+                        lambda: [("a", "/t/a"), ("b", "/t/b"), ("c", "/t/c")])
+
+    core.commit_shuffle_state({}, "UTC")
+    assert saves == [(["/t/a", "/t/b", "/t/c"], 1, "2026-08-16")]
+
+    # Same day again: state now shows today's date -> no double advance
+    state["current_index"] = 1
+    state["last_change_date"] = "2026-08-16"
+    monkeypatch.setattr(core, "load_theme_change_date",
+                        lambda shuffle_path=None: "2026-08-16")
+    saves.clear()
+    core.commit_shuffle_state({}, "UTC")
+    assert saves == [(["/t/a", "/t/b", "/t/c"], 1, "2026-08-16")]

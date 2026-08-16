@@ -181,6 +181,11 @@ def _pick_theme_for_shuffle(config: dict, timezone_str: str) -> str:
 
     This is the single writer for shuffle-list.json: it performs the whole
     load -> maybe-reshuffle -> maybe-advance -> save sequence itself.
+
+    The shuffle state is only persisted *after* the wallpaper has actually
+    been set (see ``commit_shuffle_state`` / the callers' step 5), so a
+    failed wallpaper change cannot advance the list: the next run retries
+    the same theme instead of silently skipping it.
     """
     themes = discover_themes()
     if not themes:
@@ -197,19 +202,47 @@ def _pick_theme_for_shuffle(config: dict, timezone_str: str) -> str:
         shuffle_list = create_initial_shuffle([path for _, path in themes])
         current_index = 0
 
-    # Advance to the next theme once per day
+    # Advance to the next theme once per day.  The date is only persisted
+    # after the wallpaper change succeeds (commit_shuffle_state), so a
+    # failed run retries the same advance on the next attempt.
     last_change_date = load_theme_change_date()
     current_date = get_current_date(timezone_str)
     if check_day_passed(last_change_date, current_date):
         logger.info("New day detected - advancing to next theme")
         current_index = (current_index + 1) % len(shuffle_list) if shuffle_list else 0
-        save_theme_change_date(current_date)
 
     theme_path = shuffle_list[current_index]
+    return theme_path
+
+
+def commit_shuffle_state(config: dict, timezone_str: str) -> None:
+    """Persist shuffle-list.json after a successful wallpaper change.
+
+    Called by the shuffler-mode callers (CLI change command, apply_theme)
+    once the new wallpaper is up.  A failed wallpaper change never reaches
+    this point, so the list is not advanced and the next run retries the
+    same theme.
+    """
+    shuffle_state = load_shuffle_list()
+    shuffle_list = shuffle_state.get("shuffle_list", [])
+    current_index = shuffle_state.get("current_index", 0)
+
+    # Reshuffle when the list is exhausted (keeps the in-memory selection
+    # and the persisted list in sync)
+    if check_and_reshuffle(shuffle_list, current_index, ""):
+        themes = discover_themes()
+        shuffle_list = create_initial_shuffle([path for _, path in themes])
+        current_index = 0
+
+    current_date = get_current_date(timezone_str)
+    # Advance to the next theme once per day (same rule as the picker)
+    last_change_date = load_theme_change_date()
+    if check_day_passed(last_change_date, current_date):
+        current_index = (current_index + 1) % len(shuffle_list) if shuffle_list else 0
+        save_theme_change_date(current_date)
 
     # Persist state (single writer)
     save_shuffle_list(shuffle_list, current_index, current_date)
-    return theme_path
 
 
 def _reset_shuffle_to_theme(theme_path: str, timezone_str: str) -> None:
@@ -300,8 +333,9 @@ def apply_theme(theme_path: str, config_path: Optional[str] = None,
         config.setdefault('theme', {})['last_applied'] = name
         save_config(str(cfg_path), config)
         if not theme_path:
-            # Shuffler mode already persisted shuffle state in step 1.
-            pass
+            # Shuffler mode: persist shuffle state now that the wallpaper
+            # is up (a failed set_wallpaper returned before this point).
+            commit_shuffle_state(config, timezone_str)
         else:
             shuffle_enabled = config.get('scheduling', {}).get(
                 'daily_shuffle_enabled', False)

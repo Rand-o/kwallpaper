@@ -1,14 +1,16 @@
-"""Tests for the scheduler (phase 4).
+"""Tests for the scheduler.
 
 Pins the behaviour contract:
-- change task is scheduled at local midnight (CronTrigger), not every
-  interval
-- change task is a no-op until the local date changes
-- cycle and change can never overlap (re-entrant lock)
+- only the cycle task is scheduled (interval trigger); the daily shuffle
+  is checked inside the cycle run (no midnight cron job)
+- the cycle run performs the daily shuffle when the local date differs
+  from the persisted last_change_date
 - per-run results are delivered to the GUI log callback, not print
 """
 import logging
+import sys
 import time
+import types
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +18,35 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# APScheduler is a GUI/runtime dependency (bundled in the Flatpak) and is
+# not installed in the bare test environment.  Stub it so the scheduler
+# module imports cleanly; tests that exercise start() patch the classes
+# directly.
+if "apscheduler" not in sys.modules:
+    try:
+        import apscheduler  # noqa: F401
+    except ImportError:
+        _aps = types.ModuleType("apscheduler")
+        _schedulers = types.ModuleType("apscheduler.schedulers")
+        _background = types.ModuleType("apscheduler.schedulers.background")
+        _triggers = types.ModuleType("apscheduler.triggers")
+        _interval = types.ModuleType("apscheduler.triggers.interval")
+        _background.BackgroundScheduler = object
+        _interval.IntervalTrigger = object
+        _schedulers.background = _background
+        _triggers.interval = _interval
+        _aps.schedulers = _schedulers
+        _aps.triggers = _triggers
+        sys.modules.update({
+            "apscheduler": _aps,
+            "apscheduler.schedulers": _schedulers,
+            "apscheduler.schedulers.background": _background,
+            "apscheduler.triggers": _triggers,
+            "apscheduler.triggers.interval": _interval,
+        })
+
 from kwallpaper import scheduler as scheduler_module
+from kwallpaper import cli as cli_module
 from kwallpaper.scheduler import SchedulerManager
 
 
@@ -36,108 +66,82 @@ def _make_manager(cfg, running=True):
     return mgr
 
 
-class TestChangeTaskScheduling:
-    def test_change_task_is_cron_midnight(self, cfg):
+class TestTaskScheduling:
+    def test_only_cycle_task_is_scheduled(self, cfg):
         mgr = _make_manager(cfg, running=False)
-        with patch.object(scheduler_module, "BackgroundScheduler") as bs:
+        with patch.object(scheduler_module, "APScheduler_AVAILABLE", True, create=True), \
+             patch.object(scheduler_module, "BackgroundScheduler") as bs:
             instance = bs.return_value
-            with patch.object(scheduler_module, "CronTrigger") as cron:
+            with patch.object(scheduler_module, "IntervalTrigger") as interval:
                 assert mgr.start() is True
-                jobs = {c.kwargs.get("id"): c for c in instance.add_job.call_args_list}
-                assert "change_task" in jobs
-                cron.assert_called()
-                # Cron trigger at 00:00
-                call_kwargs = cron.call_args.kwargs
-                assert call_kwargs.get("hour") == 0
-                assert call_kwargs.get("minute") == 0
-        mgr.scheduler = None
-        mgr._is_running = False
-
-    def test_cycle_task_is_interval(self, cfg):
-        mgr = _make_manager(cfg, running=False)
-        with patch.object(scheduler_module, "BackgroundScheduler") as bs:
-            instance = bs.return_value
-            with patch.object(scheduler_module, "CronTrigger"), \
-                 patch.object(scheduler_module, "IntervalTrigger") as interval:
-                assert mgr.start() is True
+                jobs = {c.kwargs.get("id") for c in instance.add_job.call_args_list}
+                assert jobs == {"cycle_task"}
                 interval.assert_called()
                 assert interval.call_args.kwargs.get("seconds") == 1
         mgr.scheduler = None
         mgr._is_running = False
 
+    def test_cycle_task_skipped_when_disabled(self, cfg):
+        import json
+        data = json.loads(Path(cfg).read_text())
+        data["scheduling"]["run_cycle"] = False
+        Path(cfg).write_text(json.dumps(data))
+        mgr = _make_manager(cfg, running=False)
+        with patch.object(scheduler_module, "BackgroundScheduler") as bs:
+            instance = bs.return_value
+            with patch.object(scheduler_module, "IntervalTrigger"):
+                assert mgr.start() is False
+                instance.add_job.assert_not_called()
+        mgr.scheduler = None
+        mgr._is_running = False
 
-class TestChangeTaskNoOp:
-    def test_first_run_records_date_without_changing(self, cfg):
-        mgr = _make_manager(cfg)
-        with patch.object(scheduler_module, "run_change_command") as change, \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-10"), \
-             patch("kwallpaper.shuffle_list_manager.load_theme_change_date",
-                   return_value="2026-02-10"):
-            mgr._run_change_task()
+
+class TestCycleDailyShuffle:
+    def test_new_day_triggers_shuffle_on_cycle(self, cfg):
+        """A cycle run shuffles when the local date differs from the
+        persisted last_change_date (covers missed midnights, reboots,
+        suspend)."""
+        args = SimpleNamespace(theme_path=None, config=cfg, time=None,
+                               monitor=False)
+        with patch.object(cli_module, "run_change_command", return_value=0) as change, \
+             patch.object(cli_module, "check_day_passed", return_value=True):
+            assert cli_module.run_cycle_command(args) == 0
+            change.assert_called_once_with(args)
+
+    def test_same_day_does_not_shuffle(self, cfg):
+        args = SimpleNamespace(theme_path=None, config=cfg, time=None,
+                               monitor=False)
+        with patch.object(cli_module, "run_change_command") as change, \
+             patch.object(cli_module, "check_day_passed", return_value=False), \
+             patch.object(cli_module, "run_change_command", return_value=0), \
+             patch.object(cli_module, "get_current_wallpaper", return_value=None), \
+             patch.object(cli_module, "change_wallpaper", return_value=True):
+            # last_applied empty + no wallpaper -> cycle falls through to
+            # its normal (error) path without touching the shuffler
+            assert cli_module.run_cycle_command(args) == 1
             change.assert_not_called()
-            assert mgr._last_change_date == "2026-02-10"
 
-    def test_restart_after_day_change_advances_on_first_run(self, cfg):
-        """A restart later in the day must not swallow the rest of the day:
-        the first run seeds from the persisted last_change_date and, if that
-        is an older day, immediately runs the change for today."""
-        mgr = _make_manager(cfg)
-        with patch.object(scheduler_module, "run_change_command", return_value=0) as change, \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"), \
-             patch("kwallpaper.shuffle_list_manager.load_theme_change_date",
-                   return_value="2026-02-10"):
-            mgr._run_change_task()
-            change.assert_called_once()
-            assert mgr._last_change_date == "2026-02-11"
-
-    def test_same_day_is_noop(self, cfg):
-        mgr = _make_manager(cfg)
-        mgr._last_change_date = "2026-02-10"
-        with patch.object(scheduler_module, "run_change_command") as change, \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-10"):
-            mgr._run_change_task()
+    def test_shuffle_disabled_skips_check(self, cfg):
+        import json
+        data = json.loads(Path(cfg).read_text())
+        data["scheduling"]["daily_shuffle_enabled"] = False
+        Path(cfg).write_text(json.dumps(data))
+        args = SimpleNamespace(theme_path=None, config=cfg, time=None,
+                               monitor=False)
+        with patch.object(cli_module, "run_change_command") as change, \
+             patch.object(cli_module, "check_day_passed", return_value=True), \
+             patch.object(cli_module, "get_current_wallpaper", return_value=None), \
+             patch.object(cli_module, "change_wallpaper", return_value=True):
+            assert cli_module.run_cycle_command(args) == 1
             change.assert_not_called()
 
-    def test_new_day_triggers_change(self, cfg):
-        mgr = _make_manager(cfg)
-        mgr._last_change_date = "2026-02-10"
-        with patch.object(scheduler_module, "run_change_command", return_value=0) as change, \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"):
-            mgr._run_change_task()
-            change.assert_called_once()
-            assert mgr._last_change_date == "2026-02-11"
-
-    def test_failed_change_does_not_update_date(self, cfg):
-        mgr = _make_manager(cfg)
-        mgr._last_change_date = "2026-02-10"
-        with patch.object(scheduler_module, "run_change_command", return_value=1), \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"):
-            mgr._run_change_task()
-            assert mgr._last_change_date == "2026-02-10"  # unchanged
-
-
-class TestLock:
-    def test_change_skipped_while_cycle_running(self, cfg):
-        mgr = _make_manager(cfg)
-        mgr._lock.acquire()  # simulate an in-flight cycle
-        try:
-            with patch.object(scheduler_module, "run_change_command") as change, \
-                 patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"):
-                mgr._last_change_date = "2026-02-10"
-                mgr._run_change_task()
-                change.assert_not_called()
-        finally:
-            mgr._lock.release()
-
-    def test_cycle_skipped_while_change_running(self, cfg):
-        mgr = _make_manager(cfg)
-        mgr._lock.acquire()
-        try:
-            with patch.object(scheduler_module, "run_cycle_command") as cycle:
-                mgr._run_cycle_task()
-                cycle.assert_not_called()
-        finally:
-            mgr._lock.release()
+    def test_failed_shuffle_still_returns_error(self, cfg):
+        args = SimpleNamespace(theme_path=None, config=cfg, time=None,
+                               monitor=False)
+        with patch.object(cli_module, "run_change_command", return_value=1) as change, \
+             patch.object(cli_module, "check_day_passed", return_value=True):
+            assert cli_module.run_cycle_command(args) == 1
+            change.assert_called_once_with(args)
 
 
 class TestLogCallback:
@@ -160,12 +164,10 @@ class TestLogCallback:
         # Must not raise
         mgr.log("still works")
 
-    def test_failed_task_logs_error(self, cfg):
+    def test_failed_cycle_task_logs_error(self, cfg):
         mgr = _make_manager(cfg)
         messages = []
         mgr.log_callback = messages.append
-        mgr._last_change_date = "2026-02-10"
-        with patch.object(scheduler_module, "run_change_command", return_value=1), \
-             patch.object(scheduler_module, "get_current_date", return_value="2026-02-11"):
-            mgr._run_change_task()
+        with patch.object(scheduler_module, "run_cycle_command", return_value=1):
+            mgr._run_cycle_task()
         assert any("failed" in m.lower() for m in messages)
