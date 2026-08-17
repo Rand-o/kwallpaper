@@ -69,11 +69,18 @@ _system_palette: Optional["QPalette"]               = None   # snapshot at start
 # ── Single-instance helpers ──────────────────────────────────────────────────
 
 def _acquire_lock() -> bool:
-    """Bind a local TCP socket to act as an instance lock."""
+    """Bind a local TCP socket to act as an instance lock.
+
+    SO_REUSEADDR is deliberately NOT set: with it, a second instance can
+    bind while a just-dead instance's socket is still in TIME_WAIT, so two
+    processes both believe they hold the lock — the old one keeps the window
+    hidden and the new one's SHOW socket never serves.  Without it the bind
+    fails cleanly and the caller falls through to _signal_running_instance()
+    (or waits for the TIME_WAIT to clear on a genuinely cold start).
+    """
     global _instance_lock
     try:
         _instance_lock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        _instance_lock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         _instance_lock.bind(("127.0.0.1", SOCKET_PORT))
         _instance_lock.listen(1)
         _instance_lock.setblocking(False)
@@ -299,16 +306,22 @@ class _PixmapLoader(QRunnable):
 class _ThumbnailWorker(QRunnable):
     """Generates a preview JPEG thumbnail off the GUI thread.
 
+    ``thumb_size`` is the requested long-edge in pixels; the worker asks
+    ``ensure_thumbnail`` for at least that size (a cached thumbnail is only
+    reused while it is at least as large, so a later bigger request
+    transparently re-encodes).
+
     Cancellable: if the caller bumps ``token.version`` (e.g. the user
     switched themes) the worker skips its work and emits nothing.
     """
 
-    def __init__(self, path: str, sig: QObject, token=None):
+    def __init__(self, path: str, sig: QObject, token=None, thumb_size: int = 1080):
         super().__init__()
         self.setAutoDelete(True)
         self._path = path
         self._sig = sig
         self._token = token
+        self._thumb_size = max(int(thumb_size), 1)
 
     def run(self):
         v = self._token.version if self._token else 0
@@ -317,7 +330,8 @@ class _ThumbnailWorker(QRunnable):
         # theme is switched (otherwise abandoned workers keep decoding
         # full-res JPEGs and writing thumbnails for themes nobody is
         # looking at).
-        thumb = ensure_thumbnail(self._path, token=self._token)
+        thumb = ensure_thumbnail(
+            self._path, thumb_size=self._thumb_size, token=self._token)
         if self._token is not None and self._token.version != v:
             return  # superseded; don't touch GUI state
         self._sig.thumb_ready.emit(self._path, thumb)
@@ -382,10 +396,14 @@ class ImageCrossFadeWidget(QWidget):
 
     _MAX_CACHE_BYTES = 256 * 1024 * 1024  # 256 MB decoded-pixmap budget
     _EAGER_AHEAD = 2                      # images loaded ahead of current
+    _THUMB_OVERSAMPLE = 2                 # thumb long-edge = 2x PHYSICAL widget long-edge
+    _THUMB_MIN = 1080                     # floor before first layout (widget is 0x0)
+    _THUMB_MAX = 3840                     # cap: never exceed 4K
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._images: list[str] = []
+        self._thumb_size = self._THUMB_MIN  # adaptive; see _desired_thumb_size
         self._blend: float = 0.0
         self._idx: int = 0
         self._thumb_paths: dict[int, str] = {}   # image idx -> thumb path
@@ -477,6 +495,21 @@ class ImageCrossFadeWidget(QWidget):
         self._anim.stop()
 
     # -- background loading ----------------------------------------------------
+    def _desired_thumb_size(self) -> int:
+        """Adaptive thumbnail long-edge: max(1080, 2x the widget's PHYSICAL
+        long-edge), capped at 4K.  The widget size is in logical pixels, so
+        it is scaled by devicePixelRatio first: on a 2x HiDPI display a
+        700px-logical widget paints into 1400 physical pixels and needs a
+        thumb of at least that size to be sharp.  The 2x oversample on top
+        of physical size leaves headroom for the smooth downscale.  Before
+        the first layout the widget is 0x0 and the 1080p floor applies."""
+        dpr = self.devicePixelRatioF()
+        if dpr <= 0:
+            dpr = 1.0
+        phys_long_edge = max(self.width(), self.height()) * dpr
+        return max(self._THUMB_MIN,
+                   min(self._THUMB_MAX, phys_long_edge * self._THUMB_OVERSAMPLE))
+
     def _request(self, idx: int):
         """Kick off the thumbnail + pixmap pipeline for one image."""
         with self._state_lock:
@@ -485,7 +518,9 @@ class ImageCrossFadeWidget(QWidget):
             path = self._images[idx]
             if idx in self._thumb_paths or idx in self._scaled:
                 return
-        self._pool.start(_ThumbnailWorker(path, self._signals, self._token))
+        self._pool.start(_ThumbnailWorker(
+            path, self._signals, self._token,
+            thumb_size=self._desired_thumb_size()))
 
     def _on_thumb_ready(self, src: str, thumb: str):
         # Stale-result guard: if the image list changed while this thumb was
@@ -555,11 +590,27 @@ class ImageCrossFadeWidget(QWidget):
         return pm.width() * pm.height() * (pm.depth() // 8)
 
     def _scale_to_widget(self, pm: QPixmap) -> QPixmap:
-        sz = self.size()
-        if sz.width() <= 0 or sz.height() <= 0:
+        # Scale to the widget's PHYSICAL pixel size, not its logical size.
+        # On a HiDPI display (devicePixelRatio > 1) the widget's width()/
+        # height() are in logical pixels but it paints into width()*dpr
+        # physical pixels.  Scaling to the logical size and letting Qt
+        # upscale the result by dpr is what made the preview look
+        # pixelated: every thumbnail was stretched 2x on a 2x display
+        # regardless of its resolution.  Scaling to physical size and
+        # tagging the pixmap with the device pixel ratio makes Qt draw it
+        # 1:1 — the preview is then always a pure downsample of the
+        # (oversampled) thumbnail, never an upscale.
+        dpr = self.devicePixelRatioF()
+        if dpr <= 0:
+            dpr = 1.0
+        phys = self.size() * dpr
+        if phys.width() <= 0 or phys.height() <= 0:
             return pm
-        return pm.scaled(sz, Qt.AspectRatioMode.KeepAspectRatio,
-                         Qt.TransformationMode.SmoothTransformation)
+        out = pm.scaled(phys, Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation)
+        if dpr != 1.0:
+            out.setDevicePixelRatio(dpr)
+        return out
 
     # -- internals -------------------------------------------------------------
     def _scaled_for(self, idx: int):
@@ -619,6 +670,52 @@ class ImageCrossFadeWidget(QWidget):
             self._scaled[idx] = self._scale_to_widget(pm)
         super().resizeEvent(event)
 
+        # The widget grew: if the adaptive target is now bigger than the
+        # thumbs we already have, re-request the current image (and the
+        # eager-ahead ones) so they are re-encoded at the higher resolution.
+        # ensure_thumbnail reuses a cached thumb only while it is at least
+        # as large as requested, so a no-op resize costs nothing.  If the
+        # widget shrank, keep the existing (sharper) thumbs — downscaling a
+        # bigger pixmap is free and we avoid re-encoding.
+        target = self._desired_thumb_size()
+        if target > self._thumb_size:
+            self._thumb_size = target
+            if self._images:
+                self._re_request_sharp()
+
+    def _re_request_sharp(self):
+        """Re-run the thumbnail pipeline for the current + eager-ahead
+        images at the new (larger) target size.  Only touches images whose
+        cached thumb is smaller than the target; the rest are left alone."""
+        n = len(self._images)
+        if n == 0:
+            return
+        cur = self._idx
+        for off in range(self._EAGER_AHEAD + 1):
+            idx = (cur + off) % n
+            with self._state_lock:
+                t = self._thumb_paths.get(idx)
+            if t is None:
+                self._request(idx)  # still loading or never started
+                continue
+            # Check the cached thumb's actual size from its header (cheap,
+            # no decode).  If it already meets the target, keep it.
+            try:
+                from PyQt6.QtGui import QImageReader
+                sz = QImageReader(t).size()
+                if max(sz.width(), sz.height()) >= self._thumb_size:
+                    continue
+            except Exception:
+                continue
+            with self._state_lock:
+                # Drop the stale mapping + any cached pixmaps for this
+                # image so _request() restarts the pipeline at the new
+                # size.  (The old raw pixmap, if any, is evicted by the
+                # byte-budget LRU once the new one lands.)
+                self._thumb_paths.pop(idx, None)
+                self._scaled.pop(idx, None)
+            self._request(idx)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         pal = self.palette()
@@ -655,14 +752,24 @@ class ImageCrossFadeWidget(QWidget):
             painter.end()
             return
 
-        cx = (sz.width()  - cur.width())  // 2
-        cy = (sz.height() - cur.height()) // 2
+        # _scale_to_widget() produces high-DPI pixmaps: their width()/
+        # height() are in PHYSICAL pixels while sz is logical, so the
+        # on-screen (logical) size is width()/dpr.  Centering with the raw
+        # physical size would offset the image off-screen on HiDPI displays.
+        dpr = cur.devicePixelRatio()
+        if dpr <= 0:
+            dpr = 1.0
+        cx = (sz.width()  - int(cur.width()  / dpr)) // 2
+        cy = (sz.height() - int(cur.height() / dpr)) // 2
         painter.setOpacity(1.0 - blend)
         painter.drawPixmap(cx, cy, cur)
 
         if blend > 0.001 and nxt is not None:
-            nx = (sz.width()  - nxt.width())  // 2
-            ny = (sz.height() - nxt.height()) // 2
+            ndpr = nxt.devicePixelRatio()
+            if ndpr <= 0:
+                ndpr = 1.0
+            nx = (sz.width()  - int(nxt.width()  / ndpr)) // 2
+            ny = (sz.height() - int(nxt.height() / ndpr)) // 2
             painter.setOpacity(blend)
             painter.drawPixmap(nx, ny, nxt)
 

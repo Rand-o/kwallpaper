@@ -17,7 +17,7 @@ Works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwin
 ## Features
 
 ### GUI
-- **Instant theme previews** — 1080p JPEG thumbnails are generated and decoded off the GUI thread (`QThreadPool` workers); the cross-fade widget only ever renders thumbnails, never full-resolution 4K images. Selecting a theme shows a first frame in milliseconds, with no event-loop jank.
+- **Instant theme previews** — adaptive-resolution JPEG thumbnails (1080p floor, 2× the preview widget size, capped at 4K) are generated and decoded off the GUI thread (`QThreadPool` workers); the cross-fade widget only ever renders thumbnails, never full-resolution images. Selecting a theme shows a first frame in milliseconds, with no event-loop jank.
 - **Theme management** — Import `.ddw`/`.zip` themes, browse, and delete them. Import/delete/apply all run in background workers so the UI never freezes, even on large `.ddw` files.
 - **Cross-fade preview** — Smooth animated transitions between theme images, with a pre-scaled pixmap cache (scaled once per image, invalidated only on resize).
 - **Scheduler tab** — Start/stop the background scheduler, view status, and follow a live event log.
@@ -165,7 +165,7 @@ Other paths (all under `~/.var/app/top.spelunk.kwallpaper/`):
 | `config/kwallpaper/config.json` | Main config |
 | `config/kwallpaper/themes/` | Imported themes (one directory per theme) |
 | `config/kwallpaper/shuffle-list.json` | Daily shuffle list state |
-| `cache/kwallpaper/thumbs/` | Generated 1080p preview thumbnails |
+| `cache/kwallpaper/thumbs/` | Generated preview thumbnails (1080p–4K, adaptive to preview size) |
 | `cache/kwallpaper/schedule-backup/` | Daily astral schedule backups |
 
 ### Time-of-Day Categories
@@ -200,7 +200,7 @@ Images are numbered 1–16 in the theme. Normalization ensures:
 ### Themes Tab
 - **Import** — Import `.ddw` or `.zip` theme files (background worker)
 - **Theme list** — Browse available themes with image counts
-- **Preview** — Live cross-fade preview from 1080p thumbnails (background decode)
+- **Preview** — Live cross-fade preview from adaptive-resolution thumbnails (1080p–4K, background decode)
 - **Apply** — Apply selected theme immediately (background worker)
 - **Delete** — Remove a theme (background worker)
 
@@ -386,7 +386,7 @@ This project is provided as-is for personal use.
 ## Changelog
 
 ### Version 1.1.0 (Current)
-- **Instant scene selection** — 1080p thumbnail pipeline with off-GUI-thread generation and decode; pre-scaled pixmap cache; no full-resolution JPEG touches on the GUI thread
+- **Instant scene selection** — adaptive thumbnail pipeline (1080p floor, 2× widget size, 4K cap) with off-GUI-thread generation and decode; pre-scaled pixmap cache; no full-resolution JPEG touches on the GUI thread
 - **Background workers** — Apply/Import/Delete run in `QThreadPool` workers with busy-state UI; no more GUI freezes
 - **Module split** — the 2,700-line `wallpaper_changer.py` god module is now focused modules (`config`, `suntime`, `selection`, `themes`, `wallpaper`, `core`, `cli`, `backup`) with a compatibility facade
 - **Single source of truth for time math** — one period model in `suntime.py`, legacy per-selector quirks pinned by tests
