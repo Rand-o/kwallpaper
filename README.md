@@ -14,6 +14,9 @@ Works with themes from [24hr Wallpaper](https://www.jetsoncreative.com/24hourwin
 ![Settings Page](screenshots/2settings.png)
 *Settings tab with scheduler configuration and location/timezone coordinates*
 
+![Schedule preview](screenshots/3schedule.png)
+*Themes tab with the 24-hour schedule preview (sun-position model): segment bands, image thumbnails at their display times, and the current-time marker*
+
 ## Features
 
 ### GUI
@@ -149,6 +152,7 @@ Default: `~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json`
 | scheduling.interval | integer | Scheduler cycle interval in seconds (default: 60) |
 | scheduling.run_cycle | boolean | Enable interval cycle task (default: true) |
 | scheduling.daily_shuffle_enabled | boolean | Enable daily theme shuffle at midnight (default: true) |
+| scheduling.suntime_model | string | Time model: `"legacy"` (fixed offsets from sunrise/sunset) or `"sun"` (WDD sun-position segments: dawn → +6° → −6° → dusk). Selectable in the GUI (Settings → Time model). Default `"legacy"` until Phase 4 |
 | scheduling.auto_start_on_launch | boolean | Start the scheduler when the GUI launches (default: false) |
 | location.city | string | City name (display only) |
 | location.timezone | string | IANA timezone string (e.g., `America/Phoenix`) |
@@ -203,9 +207,11 @@ Images are numbered 1–16 in the theme. Normalization ensures:
 - **Preview** — Live cross-fade preview from adaptive-resolution thumbnails (1080p–4K, background decode)
 - **Apply** — Apply selected theme immediately (background worker)
 - **Delete** — Remove a theme (background worker)
+- **Schedule preview** (sun-position model only) — a 24-hour timeline bar showing each image's display window with thumbnails and a current-time marker; recomputed on theme selection, settings save, and date change
 
 ### Settings Tab
 - **Scheduler** — Interval, cycle behavior, daily shuffle, start-on-launch
+- **Time model** — choose between the legacy fixed-offset model and the WDD sun-position model (applies on Save; hot-reloads a running scheduler)
 - **Location** — Timezone and coordinates for accurate sun calculations, with auto-detect
 - **Appearance** — Override KDE color scheme (system/light/dark)
 - **Auto-start** — Start at login (writes `~/.config/autostart` entry)
