@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 import json
 from pathlib import Path
 
-from kwallpaper import selection, suntime
+from kwallpaper import core, selection, suntime
 from kwallpaper import solarsegments
 from kwallpaper.solarsegments import (
     IncompleteSegmentsError,
@@ -481,3 +481,48 @@ def test_cli_sun_model_empty_image_list_falls_back_to_legacy(
     # to the day list, whose index formula is int(position*16)+5 -> 5.
     # (sun_11.jpg would be the result with a non-empty sunrise list.)
     assert Path(result).name == "sun_05.jpg"
+
+
+def _patch_apply_theme_env(monkeypatch, tmp_path, cfg):
+    """Patch core's collaborators; return a list capturing applied paths."""
+    applied = []
+    monkeypatch.setattr(core, "set_wallpaper",
+                        lambda p: applied.append(p) or True)
+    monkeypatch.setattr(core, "load_config",
+                        lambda p: json.loads(Path(p).read_text()))
+    monkeypatch.setattr(core, "save_config", lambda p, c: None)
+    monkeypatch.setattr(core, "discover_themes",
+                        lambda: [("theme", str(Path(cfg).parent / "theme"))])
+    return applied
+
+
+def test_apply_theme_routes_to_sun_model(tmp_path, monkeypatch):
+    """apply_theme picks the sun-model image when configured; no core.py
+    changes needed because it delegates to the routed entry points."""
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path, model="sun")
+    data = json.loads(cfg.read_text())
+    data["scheduling"]["daily_shuffle_enabled"] = False
+    cfg.write_text(json.dumps(data))
+
+    _patch_time_and_sun(monkeypatch, 12, 0, use_sun_model=True)
+    applied = _patch_apply_theme_env(monkeypatch, tmp_path, cfg)
+
+    result = core.apply_theme("theme", str(cfg))
+    assert result.success
+    assert Path(applied[0]).name == "sun_08.jpg"
+
+
+def test_apply_theme_default_model_is_legacy(tmp_path, monkeypatch):
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path)
+    data = json.loads(cfg.read_text())
+    data["scheduling"]["daily_shuffle_enabled"] = False
+    cfg.write_text(json.dumps(data))
+
+    _patch_time_and_sun(monkeypatch, 12, 0, use_sun_model=False)
+    applied = _patch_apply_theme_env(monkeypatch, tmp_path, cfg)
+
+    result = core.apply_theme("theme", str(cfg))
+    assert result.success
+    assert Path(applied[0]).name == "sun_12.jpg"
