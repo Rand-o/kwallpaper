@@ -69,6 +69,7 @@ def _default_config() -> Dict[str, Any]:
             "cycle_interval": 60,            # seconds between cycle runs
             "run_cycle": True,
             "daily_shuffle_enabled": True,
+            "suntime_model": "legacy",       # legacy | sun
         },
         "theme": {
             "last_applied": "",
@@ -302,6 +303,16 @@ def _require_number(config: Dict[str, Any], dotted: str) -> None:
             f"Config validation failed: '{dotted}' must be a number")
 
 
+def _require_suntime_model(config: Dict[str, Any]) -> None:
+    section = config.get("scheduling")
+    if not isinstance(section, dict) or "suntime_model" not in section:
+        return
+    if section["suntime_model"] not in ("legacy", "sun"):
+        raise ValueError(
+            "Config validation failed: 'scheduling.suntime_model' must be "
+            "'legacy' or 'sun'")
+
+
 def validate_config(config: Dict[str, Any]) -> None:
     """Validate a configuration dictionary (v2 schema; legacy keys ok).
 
@@ -346,6 +357,7 @@ def validate_config(config: Dict[str, Any]) -> None:
     _require_str(config, "scheduling.daily_change_time")
     # legacy alias
     _require_bool(config, "scheduling.auto_start_on_launch")
+    _require_suntime_model(config)
 
     # theme
     if "theme" in config and not isinstance(config["theme"], dict):

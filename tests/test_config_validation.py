@@ -2,6 +2,7 @@ import pytest
 import tempfile
 import os
 import json
+import copy
 from pathlib import Path
 from kwallpaper import wallpaper_changer
 load_config = wallpaper_changer.load_config
@@ -137,3 +138,45 @@ class TestNormalizeLegacy:
         assert on_disk["scheduling"]["cycle_interval"] == 60
         assert "interval" not in on_disk["scheduling"]
         assert on_disk["autostart"]["start_scheduler_on_launch"] is True
+
+
+def test_validate_config_suntime_model_valid():
+    config = {
+        "version": 2,
+        "location": {"latitude": 33.4, "longitude": -112.0,
+                     "timezone": "America/Phoenix"},
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                       "daily_shuffle_enabled": True,
+                       "suntime_model": "sun"},
+    }
+    validate_config(config)
+
+
+def test_validate_config_suntime_model_legacy_valid():
+    validate_config({"scheduling": {"suntime_model": "legacy"}})
+
+
+@pytest.mark.parametrize("value", ["Solar", "SUN", "solar", 1, None, True,
+                                   ["sun"]])
+def test_validate_config_suntime_model_invalid(value):
+    config = {"scheduling": {"suntime_model": value}}
+    with pytest.raises(ValueError, match="suntime_model"):
+        validate_config(config)
+
+
+def test_normalize_config_fills_missing_suntime_model():
+    """Legacy configs without the field get the default 'legacy'."""
+    config = {"scheduling": {"cycle_interval": 120, "run_cycle": False}}
+    loaded = normalize_config(copy.deepcopy(config))
+    assert loaded["scheduling"]["suntime_model"] == "legacy"
+
+
+def test_normalize_config_preserves_explicit_suntime_model():
+    config = {"scheduling": {"suntime_model": "sun"}}
+    loaded = normalize_config(copy.deepcopy(config))
+    assert loaded["scheduling"]["suntime_model"] == "sun"
+
+
+def test_default_config_has_suntime_model_legacy():
+    from kwallpaper.config import _default_config
+    assert _default_config()["scheduling"]["suntime_model"] == "legacy"
