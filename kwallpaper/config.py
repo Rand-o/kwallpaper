@@ -69,10 +69,12 @@ def _default_config() -> Dict[str, Any]:
             "cycle_interval": 60,            # seconds between cycle runs
             "run_cycle": True,
             "daily_shuffle_enabled": True,
+            "safety_interval": 600,          # sun-mode safety-net tick (seconds)
             "suntime_model": "legacy",       # legacy | sun
         },
         "theme": {
             "last_applied": "",
+            "last_applied_image": "",        # path of last successfully applied image
         },
     })
 
@@ -352,6 +354,7 @@ def validate_config(config: Dict[str, Any]) -> None:
     _require_positive_int(config, "scheduling.cycle_interval")
     # legacy alias, validated for backward compatibility
     _require_positive_int(config, "scheduling.interval")
+    _require_positive_int(config, "scheduling.safety_interval")
     _require_bool(config, "scheduling.run_cycle")
     _require_bool(config, "scheduling.daily_shuffle_enabled")
     _require_str(config, "scheduling.daily_change_time")
@@ -363,3 +366,4 @@ def validate_config(config: Dict[str, Any]) -> None:
     if "theme" in config and not isinstance(config["theme"], dict):
         raise ValueError("Config validation failed: 'theme' must be a dictionary")
     _require_str(config, "theme.last_applied")
+    _require_str(config, "theme.last_applied_image")

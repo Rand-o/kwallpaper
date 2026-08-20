@@ -5,6 +5,7 @@ import json
 import copy
 from pathlib import Path
 from kwallpaper import wallpaper_changer
+from kwallpaper.config import _default_config
 load_config = wallpaper_changer.load_config
 validate_config = wallpaper_changer.validate_config
 save_config = wallpaper_changer.save_config
@@ -180,3 +181,46 @@ def test_normalize_config_preserves_explicit_suntime_model():
 def test_default_config_has_suntime_model_legacy():
     from kwallpaper.config import _default_config
     assert _default_config()["scheduling"]["suntime_model"] == "legacy"
+
+
+class TestSafetyIntervalValidation:
+    def test_validate_config_safety_interval_valid(self):
+        config = _default_config()
+        config["scheduling"]["safety_interval"] = 120
+        validate_config(config)  # should not raise
+
+    @pytest.mark.parametrize("bad", [0, -5, "600", None, True])
+    def test_validate_config_safety_interval_invalid(self, bad):
+        config = _default_config()
+        config["scheduling"]["safety_interval"] = bad
+        with pytest.raises(ValueError, match="safety_interval"):
+            validate_config(config)
+
+    def test_normalize_config_fills_missing_safety_interval(self):
+        config = _default_config()
+        del config["scheduling"]["safety_interval"]
+        result = normalize_config(config)
+        assert result["scheduling"]["safety_interval"] == 600
+
+    def test_default_config_has_safety_interval_600(self):
+        assert _default_config()["scheduling"]["safety_interval"] == 600
+
+
+class TestLastAppliedImageValidation:
+    def test_validate_config_last_applied_image_valid(self):
+        config = _default_config()
+        config["theme"]["last_applied_image"] = "/home/u/Pictures/wallpaper/sun_07.jpg"
+        validate_config(config)  # should not raise
+
+    @pytest.mark.parametrize("bad", [1, None, ["x"]])
+    def test_validate_config_last_applied_image_invalid(self, bad):
+        config = _default_config()
+        config["theme"]["last_applied_image"] = bad
+        with pytest.raises(ValueError, match="last_applied_image"):
+            validate_config(config)
+
+    def test_normalize_config_fills_missing_last_applied_image(self):
+        config = _default_config()
+        del config["theme"]["last_applied_image"]
+        result = normalize_config(config)
+        assert result["theme"]["last_applied_image"] == ""
