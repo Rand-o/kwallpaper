@@ -28,6 +28,7 @@ from kwallpaper.suntime import (
     image_period,
     _night_now_for_pos,
 )
+from kwallpaper.solarsegments import image_at, segments_for_config
 from kwallpaper.themes import extract_theme, normalize_image_lists
 
 
@@ -158,7 +159,15 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         now = datetime.now(ZoneInfo(timezone))
     except Exception:
         # Fallback to UTC if timezone not available
+        config = {}
         now = datetime.now(ZoneInfo('UTC'))
+
+    # Sun-position model (WDD-style): routed by scheduling.suntime_model.
+    # NOTE: no fallback yet — added in Task 9.
+    if config.get('scheduling', {}).get('suntime_model') == 'sun':
+        seg = segments_for_config(config_path, now=now)
+        _category, image_index = image_at(now, seg, theme_data)
+        return _match_image_file(theme_path_obj, image_index, theme_data)
 
     # Get time-of-day category
     time_of_day = detect_time_of_day_sun(config_path, now=now)

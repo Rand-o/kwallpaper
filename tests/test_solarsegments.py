@@ -10,7 +10,10 @@ import pytest
 from zoneinfo import ZoneInfo
 
 import json
+from pathlib import Path
 
+from kwallpaper import selection, suntime
+from kwallpaper import solarsegments
 from kwallpaper.solarsegments import (
     IncompleteSegmentsError,
     Segments,
@@ -286,3 +289,114 @@ def test_segments_for_config_pre_dawn_previous_day(tmp_path):
     cfg = _write_config(tmp_path)
     now = datetime(2026, 6, 21, 3, 0, tzinfo=TZ)
     assert segments_for_config(str(cfg), now=now).day == date(2026, 6, 20)
+
+
+def _write_theme(tmp_path, n=16):
+    """Theme dir with n images sun_01.jpg..sun_NN.jpg, all four lists [1..n]."""
+    t = tmp_path / "theme"
+    t.mkdir()
+    (t / "theme.json").write_text(json.dumps({
+        "displayName": "WDD",
+        "imageFilename": "sun_*.jpg",
+        "sunriseImageList": list(range(1, n + 1)),
+        "dayImageList": list(range(1, n + 1)),
+        "sunsetImageList": list(range(1, n + 1)),
+        "nightImageList": list(range(1, n + 1)),
+    }))
+    for i in range(1, n + 1):
+        (t / f"sun_{i:02d}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+    return t
+
+
+class _FixedDT(datetime):
+    """datetime stand-in with a controllable 'now'.
+
+    IMPORTANT: when patching ``suntime.datetime`` (or
+    ``selection.datetime``) with this subclass, the fake sun values must
+    be ``_FixedDT`` instances: ``suntime.time_of_day_for`` does
+    ``isinstance(x, datetime)`` and ``datetime`` resolves to the patched
+    module global, so plain datetimes would fail the check.
+    """
+    FIXED = None
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls.FIXED if tz is None else cls.FIXED.astimezone(tz)
+
+
+def _fake_sun():
+    """Fixed 2026-06-21 Phoenix sun values (as _FixedDT instances)."""
+    def t(hh, mm, ss, us):
+        return _FixedDT(2026, 6, 21, hh, mm, ss, us, tzinfo=TZ)
+    return {
+        "dawn": t(4, 49, 43, 543358),
+        "sunrise": t(5, 19, 14, 465394),
+        "sunset": t(19, 41, 7, 732335),
+        "dusk": t(20, 10, 38, 578189),
+    }
+
+
+def _fake_segments(day, tz, lat, lon):
+    """Uniform synthetic segments (identical boundaries every day)."""
+    def at(hh, mm, ss, us, d):
+        return datetime(d.year, d.month, d.day, hh, mm, ss, us, tzinfo=tz)
+    return Segments(
+        day=day,
+        dawn=at(4, 49, 43, 543358, day),
+        golden_hour_end=at(5, 54, 55, 713299, day),
+        golden_hour=at(19, 5, 26, 557453, day),
+        dusk=at(20, 10, 38, 578189, day),
+        next_dawn=at(4, 49, 43, 543358, day + timedelta(days=1)),
+    )
+
+
+def _patch_time_and_sun(monkeypatch, hh, mm, use_sun_model):
+    """Freeze 'now' at 2026-06-21 hh:mm Phoenix and pin sun values.
+
+    Patches BOTH the suntime and selection namespaces because
+    selection.py imports _real_sun_data into its own namespace.
+    """
+    _FixedDT.FIXED = _FixedDT(2026, 6, 21, hh, mm, tzinfo=TZ)
+    fake_sun = _fake_sun()
+    fake_sun_data = lambda tz, lat, lon, date=None: dict(fake_sun)
+    monkeypatch.setattr(selection, "datetime", _FixedDT)
+    monkeypatch.setattr(suntime, "datetime", _FixedDT)
+    monkeypatch.setattr(suntime, "_real_sun_data", fake_sun_data)
+    monkeypatch.setattr(selection, "_real_sun_data", fake_sun_data)
+    monkeypatch.setattr("kwallpaper.backup.save_daily_backup_schedule",
+                        lambda *a, **k: None)
+    if use_sun_model:
+        monkeypatch.setattr(solarsegments, "solar_segments", _fake_segments)
+
+
+@pytest.mark.parametrize("hhmm,expected", [
+    ("04:30", "sun_16.jpg"),
+    ("05:30", "sun_01.jpg"),
+    ("12:00", "sun_08.jpg"),
+    ("03:00", "sun_13.jpg"),
+])
+def test_cli_sun_model_selection(tmp_path, monkeypatch, hhmm, expected):
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path, model="sun")
+    h, m = map(int, hhmm.split(":"))
+    _patch_time_and_sun(monkeypatch, h, m, use_sun_model=True)
+    result = selection.select_image_for_time_cli(str(t), str(cfg))
+    assert Path(result).name == expected
+
+
+@pytest.mark.parametrize("hhmm,expected", [
+    ("04:30", "sun_02.jpg"),
+    ("05:30", "sun_11.jpg"),
+    ("12:00", "sun_12.jpg"),
+    ("23:00", "sun_06.jpg"),
+    ("00:00", "sun_08.jpg"),
+    ("03:00", "sun_14.jpg"),
+])
+def test_cli_default_model_is_legacy(tmp_path, monkeypatch, hhmm, expected):
+    """No suntime_model field -> legacy model, byte-identical results."""
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path)  # no suntime_model
+    h, m = map(int, hhmm.split(":"))
+    _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
+    result = selection.select_image_for_time_cli(str(t), str(cfg))
+    assert Path(result).name == expected
