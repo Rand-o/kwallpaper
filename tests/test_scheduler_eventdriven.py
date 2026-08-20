@@ -331,3 +331,94 @@ class TestSunModeStart:
             bs.return_value.add_job.assert_not_called()
         mgr.scheduler = None
         mgr._is_running = False
+
+
+class TestRearmSequence:
+    def test_run_rearms_one_shot(self, cfg_sun):
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        with patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT) as nct, \
+             patch.object(scheduler_module, "run_cycle_command",
+                          return_value=0):
+            mgr._run_cycle_task()
+            nct.assert_called_once_with(cfg_sun)
+            assert dt.call_args.kwargs.get("run_date") is FIXED_NEXT
+            ids = [c.kwargs.get("id")
+                   for c in mgr.scheduler.add_job.call_args_list]
+            assert ids == ["cycle_task"]
+
+    def test_lock_skipped_run_still_rearms(self, cfg_sun):
+        # The triggering one-shot was consumed by APScheduler even though
+        # the run was skipped by the lock — the re-arm must still happen.
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        lock = MagicMock()
+        lock.acquire.return_value = False
+        mgr._lock = lock
+        with patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            mgr._run_cycle_task()
+            assert dt.call_args.kwargs.get("run_date") is FIXED_NEXT
+
+    def test_incomplete_segments_interval_fallback(self, cfg_sun):
+        from kwallpaper.solarsegments import IncompleteSegmentsError
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        messages = []
+        mgr.log_callback = messages.append
+        with patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          side_effect=IncompleteSegmentsError("polar day")), \
+             patch.object(scheduler_module, "run_cycle_command",
+                          return_value=0):
+            mgr._run_cycle_task()
+            assert it.call_args.kwargs.get("seconds") == 60
+            dt.assert_not_called()
+            ids = [c.kwargs.get("id")
+                   for c in mgr.scheduler.add_job.call_args_list]
+            assert ids == ["cycle_task"]
+            assert any("falling back" in m for m in messages)
+
+    def test_legacy_run_does_not_rearm(self, cfg_legacy):
+        mgr = _make_manager(cfg_legacy, running=True)
+        mgr.scheduler = MagicMock()
+        with patch.object(scheduler_module, "run_cycle_command",
+                          return_value=0), \
+             patch.object(scheduler_module,
+                          "next_change_time_for_config") as nct:
+            mgr._run_cycle_task()
+            nct.assert_not_called()
+            mgr.scheduler.add_job.assert_not_called()
+
+    def test_reload_interval_sun_mode_rearms(self, cfg_sun):
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        with patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            assert mgr.reload_cycle_interval() is True
+            assert dt.call_args.kwargs.get("run_date") is FIXED_NEXT
+
+    def test_safety_tick_runs_shuffle_check(self, cfg_sun):
+        # The safety tick runs the same _run_cycle_task, so the daily
+        # shuffle check (first thing inside run_cycle_command) still runs
+        # on every tick.
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        with patch.object(cli_module, "run_change_command",
+                          return_value=0) as change, \
+             patch.object(cli_module, "check_day_passed",
+                          lambda *a: True), \
+             patch.object(scheduler_module, "DateTrigger"), \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            mgr._run_cycle_task()
+            change.assert_called_once()
+            called_args = change.call_args.args[0]
+            assert called_args.config == cfg_sun
+            assert called_args.theme_path is None
+            assert called_args.time is None

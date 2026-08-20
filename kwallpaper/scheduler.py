@@ -144,6 +144,10 @@ class SchedulerManager:
         if not self._lock.acquire(blocking=False):
             self.log("Cycle task skipped: previous run still in progress",
                      logging.DEBUG)
+            # The one-shot (if any) that triggered this run has already
+            # been consumed by APScheduler; re-arm it even though the
+            # actual cycle run was skipped by the lock.
+            self._rearm_next_change()
             return
         try:
             class MockArgs:
@@ -163,6 +167,9 @@ class SchedulerManager:
             logger.debug("Cycle task traceback", exc_info=True)
         finally:
             self._lock.release()
+            # Sun mode: re-arm the one-shot at the next change instant.
+            # Legacy mode: no-op (the interval job keeps running).
+            self._rearm_next_change()
 
     def _rearm_next_change(self) -> None:
         """Re-arm the one-shot cycle job at the next image boundary.
@@ -316,6 +323,13 @@ class SchedulerManager:
             return False
         try:
             config = self._get_config()
+            if config.get('suntime_model') == 'sun':
+                # Sun mode: re-arm the one-shot from the (possibly
+                # changed) config.  An interval fallback armed during
+                # incomplete segments picks up the new cycle_interval on
+                # the next re-arm.
+                self._rearm_next_change()
+                return True
             interval = config.get('interval', 60)
             if 'cycle' in self._tasks:
                 self.scheduler.add_job(
