@@ -233,6 +233,7 @@ def select_image_for_specific_time(time_str: str, theme_path: str,
             timezone = config.get('location', {}).get(
                 'timezone', 'America/Los_Angeles')
         except Exception:
+            config = {}
             timezone = 'America/Los_Angeles'
 
         # Ensure now is timezone-aware in the config timezone
@@ -245,6 +246,13 @@ def select_image_for_specific_time(time_str: str, theme_path: str,
 
     theme_path_obj = _resolve_theme_dir(theme_path)
     theme_data = load_theme_data(theme_path_obj)
+
+    # Sun-position model (WDD-style): routed by scheduling.suntime_model.
+    # NOTE: no fallback yet — added in Task 9.
+    if config.get('scheduling', {}).get('suntime_model') == 'sun':
+        seg = segments_for_config(config_path, now=now)
+        _category, image_index = image_at(now, seg, theme_data)
+        return _match_image_file(theme_path_obj, image_index, theme_data)
 
     try:
         time_of_day = detect_time_of_day_for_time(time_str, config_path)

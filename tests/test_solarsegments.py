@@ -400,3 +400,37 @@ def test_cli_default_model_is_legacy(tmp_path, monkeypatch, hhmm, expected):
     _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
     result = selection.select_image_for_time_cli(str(t), str(cfg))
     assert Path(result).name == expected
+
+
+@pytest.mark.parametrize("hhmm,expected", [
+    ("04:30", "sun_16.jpg"),
+    ("05:30", "sun_01.jpg"),
+    ("12:00", "sun_08.jpg"),
+    ("03:00", "sun_13.jpg"),
+])
+def test_specific_time_sun_model_selection(tmp_path, monkeypatch, hhmm,
+                                           expected):
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path, model="sun")
+    h, m = map(int, hhmm.split(":"))
+    _patch_time_and_sun(monkeypatch, h, m, use_sun_model=True)
+    result = selection.select_image_for_specific_time(hhmm, str(t), str(cfg))
+    assert Path(result).name == expected
+
+
+@pytest.mark.parametrize("hhmm,expected", [
+    ("04:30", "sun_02.jpg"),
+    ("05:30", "sun_11.jpg"),
+    ("12:00", "sun_12.jpg"),
+    ("23:00", "sun_06.jpg"),
+    ("00:00", "sun_08.jpg"),
+    ("03:00", "sun_14.jpg"),
+])
+def test_specific_time_default_model_is_legacy(tmp_path, monkeypatch, hhmm,
+                                               expected):
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path)  # no suntime_model
+    h, m = map(int, hhmm.split(":"))
+    _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
+    result = selection.select_image_for_specific_time(hhmm, str(t), str(cfg))
+    assert Path(result).name == expected
