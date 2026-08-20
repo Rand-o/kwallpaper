@@ -163,11 +163,16 @@ def select_image_for_time_cli(theme_path: str, config_path: str) -> str:
         now = datetime.now(ZoneInfo('UTC'))
 
     # Sun-position model (WDD-style): routed by scheduling.suntime_model.
-    # NOTE: no fallback yet — added in Task 9.
+    # Any failure (polar incomplete segments, empty image list, astral
+    # unavailable) falls back to the legacy model below.
     if config.get('scheduling', {}).get('suntime_model') == 'sun':
-        seg = segments_for_config(config_path, now=now)
-        _category, image_index = image_at(now, seg, theme_data)
-        return _match_image_file(theme_path_obj, image_index, theme_data)
+        try:
+            seg = segments_for_config(config_path, now=now)
+            _category, image_index = image_at(now, seg, theme_data)
+            return _match_image_file(theme_path_obj, image_index, theme_data)
+        except Exception as e:
+            logger.warning(
+                "Sun-position model failed (%s); falling back to legacy", e)
 
     # Get time-of-day category
     time_of_day = detect_time_of_day_sun(config_path, now=now)
@@ -248,11 +253,16 @@ def select_image_for_specific_time(time_str: str, theme_path: str,
     theme_data = load_theme_data(theme_path_obj)
 
     # Sun-position model (WDD-style): routed by scheduling.suntime_model.
-    # NOTE: no fallback yet — added in Task 9.
+    # Any failure (polar incomplete segments, empty image list, astral
+    # unavailable) falls back to the legacy model below.
     if config.get('scheduling', {}).get('suntime_model') == 'sun':
-        seg = segments_for_config(config_path, now=now)
-        _category, image_index = image_at(now, seg, theme_data)
-        return _match_image_file(theme_path_obj, image_index, theme_data)
+        try:
+            seg = segments_for_config(config_path, now=now)
+            _category, image_index = image_at(now, seg, theme_data)
+            return _match_image_file(theme_path_obj, image_index, theme_data)
+        except Exception as e:
+            logger.warning(
+                "Sun-position model failed (%s); falling back to legacy", e)
 
     try:
         time_of_day = detect_time_of_day_for_time(time_str, config_path)

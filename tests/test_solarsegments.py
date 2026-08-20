@@ -434,3 +434,50 @@ def test_specific_time_default_model_is_legacy(tmp_path, monkeypatch, hhmm,
     _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
     result = selection.select_image_for_specific_time(hhmm, str(t), str(cfg))
     assert Path(result).name == expected
+
+
+def _polar_segments(day, tz, lat, lon):
+    return Segments(day=day, dawn=None, golden_hour_end=None,
+                    golden_hour=None, dusk=None, next_dawn=None)
+
+
+def test_cli_sun_model_incomplete_falls_back_to_legacy(tmp_path, monkeypatch):
+    """Polar/incomplete segments -> legacy model for that day."""
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path, model="sun")
+    _patch_time_and_sun(monkeypatch, 12, 0, use_sun_model=False)
+    monkeypatch.setattr(solarsegments, "solar_segments", _polar_segments)
+    result = selection.select_image_for_time_cli(str(t), str(cfg))
+    assert Path(result).name == "sun_12.jpg"  # legacy 12:00 result
+
+
+def test_specific_time_sun_model_incomplete_falls_back_to_legacy(
+        tmp_path, monkeypatch):
+    t = _write_theme(tmp_path)
+    cfg = _write_config(tmp_path, model="sun")
+    _patch_time_and_sun(monkeypatch, 12, 0, use_sun_model=False)
+    monkeypatch.setattr(solarsegments, "solar_segments", _polar_segments)
+    result = selection.select_image_for_specific_time("12:00", str(t),
+                                                      str(cfg))
+    assert Path(result).name == "sun_12.jpg"  # legacy 12:00 result
+
+
+def test_cli_sun_model_empty_image_list_falls_back_to_legacy(
+        tmp_path, monkeypatch):
+    """Empty category list in the sun model -> legacy model, not crash."""
+    t = _write_theme(tmp_path)
+    (t / "theme.json").write_text(json.dumps({
+        "displayName": "WDD",
+        "imageFilename": "sun_*.jpg",
+        "sunriseImageList": [],
+        "dayImageList": list(range(1, 17)),
+        "sunsetImageList": list(range(1, 17)),
+        "nightImageList": list(range(1, 17)),
+    }))
+    cfg = _write_config(tmp_path, model="sun")
+    _patch_time_and_sun(monkeypatch, 5, 30, use_sun_model=True)
+    result = selection.select_image_for_time_cli(str(t), str(cfg))
+    # Legacy 05:30 with an EMPTY sunrise list: _pick_image_list advances
+    # to the day list, whose index formula is int(position*16)+5 -> 5.
+    # (sun_11.jpg would be the result with a non-empty sunrise list.)
+    assert Path(result).name == "sun_05.jpg"
