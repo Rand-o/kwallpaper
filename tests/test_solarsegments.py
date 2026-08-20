@@ -393,9 +393,9 @@ def test_cli_sun_model_selection(tmp_path, monkeypatch, hhmm, expected):
     ("03:00", "sun_14.jpg"),
 ])
 def test_cli_default_model_is_legacy(tmp_path, monkeypatch, hhmm, expected):
-    """No suntime_model field -> legacy model, byte-identical results."""
+    """Explicit legacy model -> legacy results (Phase 4: default is sun)."""
     t = _write_theme(tmp_path)
-    cfg = _write_config(tmp_path)  # no suntime_model
+    cfg = _write_config(tmp_path, model="legacy")
     h, m = map(int, hhmm.split(":"))
     _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
     result = selection.select_image_for_time_cli(str(t), str(cfg))
@@ -429,7 +429,7 @@ def test_specific_time_sun_model_selection(tmp_path, monkeypatch, hhmm,
 def test_specific_time_default_model_is_legacy(tmp_path, monkeypatch, hhmm,
                                                expected):
     t = _write_theme(tmp_path)
-    cfg = _write_config(tmp_path)  # no suntime_model
+    cfg = _write_config(tmp_path, model="legacy")
     h, m = map(int, hhmm.split(":"))
     _patch_time_and_sun(monkeypatch, h, m, use_sun_model=False)
     result = selection.select_image_for_specific_time(hhmm, str(t), str(cfg))
@@ -515,7 +515,7 @@ def test_apply_theme_routes_to_sun_model(tmp_path, monkeypatch):
 
 def test_apply_theme_default_model_is_legacy(tmp_path, monkeypatch):
     t = _write_theme(tmp_path)
-    cfg = _write_config(tmp_path)
+    cfg = _write_config(tmp_path, model="legacy")
     data = json.loads(cfg.read_text())
     data["scheduling"]["daily_shuffle_enabled"] = False
     cfg.write_text(json.dumps(data))

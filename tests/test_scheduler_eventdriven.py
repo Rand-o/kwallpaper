@@ -238,14 +238,15 @@ def cfg_sun(tmp_path):
 
 @pytest.fixture
 def cfg_legacy(tmp_path):
-    # No suntime_model key: normalize_config fills "legacy" (the default).
+    # Explicit legacy model (Phase 4: the default is now "sun").
     p = tmp_path / "config.json"
     p.write_text(json.dumps({
         "version": 2,
         "location": {"latitude": 33.4, "longitude": -112.0,
                      "timezone": "America/Phoenix"},
         "scheduling": {"cycle_interval": 60, "run_cycle": True,
-                       "daily_shuffle_enabled": True},
+                       "daily_shuffle_enabled": True,
+                       "suntime_model": "legacy"},
     }))
     return str(p)
 

@@ -226,7 +226,7 @@ def schedule_for_config(config_path: str, theme_dir: Path,
     tz = ZoneInfo(loc.get("timezone", "UTC"))
     lat = float(loc.get("latitude", 0.0))
     lon = float(loc.get("longitude", 0.0))
-    model = config.get("scheduling", {}).get("suntime_model", "legacy")
+    model = config.get("scheduling", {}).get("suntime_model", "sun")
 
     if now is None:
         now = datetime.now(tz)

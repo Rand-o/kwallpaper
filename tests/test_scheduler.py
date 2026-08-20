@@ -59,7 +59,7 @@ def cfg(tmp_path):
     p = tmp_path / "config.json"
     p.write_text("""{
   "location": {"latitude": 35.0, "longitude": -112.0, "timezone": "UTC"},
-  "scheduling": {"cycle_interval": 1, "daily_shuffle_enabled": true, "run_cycle": true}
+  "scheduling": {"cycle_interval": 1, "daily_shuffle_enabled": true, "run_cycle": true, "suntime_model": "legacy"}
 }""")
     return str(p)
 
@@ -175,3 +175,12 @@ class TestLogCallback:
         with patch.object(scheduler_module, "run_cycle_command", return_value=1):
             mgr._run_cycle_task()
         assert any("failed" in m.lower() for m in messages)
+
+
+def test_get_config_corrupt_config_falls_back_to_sun_model(tmp_path):
+    """An unreadable config file must fall back to the same model as a
+    fresh install (sun), not the pre-Phase-4 legacy default."""
+    cfg = tmp_path / "config.json"
+    cfg.write_text("{not valid json")
+    mgr = SchedulerManager(config_path=str(cfg))
+    assert mgr._get_config()["suntime_model"] == "sun"

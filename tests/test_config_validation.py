@@ -166,10 +166,10 @@ def test_validate_config_suntime_model_invalid(value):
 
 
 def test_normalize_config_fills_missing_suntime_model():
-    """Legacy configs without the field get the default 'legacy'."""
+    """Configs without the field get the default 'sun' (Phase 4 flip)."""
     config = {"scheduling": {"cycle_interval": 120, "run_cycle": False}}
     loaded = normalize_config(copy.deepcopy(config))
-    assert loaded["scheduling"]["suntime_model"] == "legacy"
+    assert loaded["scheduling"]["suntime_model"] == "sun"
 
 
 def test_normalize_config_preserves_explicit_suntime_model():
@@ -178,9 +178,9 @@ def test_normalize_config_preserves_explicit_suntime_model():
     assert loaded["scheduling"]["suntime_model"] == "sun"
 
 
-def test_default_config_has_suntime_model_legacy():
+def test_default_config_has_suntime_model_sun():
     from kwallpaper.config import _default_config
-    assert _default_config()["scheduling"]["suntime_model"] == "legacy"
+    assert _default_config()["scheduling"]["suntime_model"] == "sun"
 
 
 class TestSafetyIntervalValidation:

@@ -123,7 +123,7 @@ class SchedulerManager:
             return {
                 'interval': scheduling.get('cycle_interval', 60),
                 'safety_interval': scheduling.get('safety_interval', 600),
-                'suntime_model': scheduling.get('suntime_model', 'legacy'),
+                'suntime_model': scheduling.get('suntime_model', 'sun'),
                 'daily_shuffle_enabled': scheduling.get('daily_shuffle_enabled', True),
                 'run_cycle': scheduling.get('run_cycle', True),
                 'timezone': location.get('timezone', 'UTC'),
@@ -133,7 +133,7 @@ class SchedulerManager:
             return {
                 'interval': 60,
                 'safety_interval': 600,
-                'suntime_model': 'legacy',
+                'suntime_model': 'sun',
                 'daily_shuffle_enabled': True,
                 'run_cycle': True,
                 'timezone': 'UTC',

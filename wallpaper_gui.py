@@ -1269,7 +1269,7 @@ class SettingsPage(QWidget):
                 s.get("daily_shuffle_enabled", True))
             self.auto_start_scheduler.setChecked(
                 app_cfg.get("start_scheduler_on_launch", True))
-            model = s.get("suntime_model", "legacy")
+            model = s.get("suntime_model", "sun")
             self.time_model.blockSignals(True)
             self.time_model.setCurrentIndex(
                 {"legacy": 0, "sun": 1}.get(model, 0))

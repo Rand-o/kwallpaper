@@ -70,7 +70,7 @@ def _default_config() -> Dict[str, Any]:
             "run_cycle": True,
             "daily_shuffle_enabled": True,
             "safety_interval": 600,          # sun-mode safety-net tick (seconds)
-            "suntime_model": "legacy",       # legacy | sun
+            "suntime_model": "sun",       # legacy | sun
         },
         "theme": {
             "last_applied": "",

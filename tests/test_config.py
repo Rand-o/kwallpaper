@@ -46,3 +46,44 @@ def test_load_config_file_not_found():
 
     with pytest.raises(FileNotFoundError):
         load_config("/nonexistent/config.json")
+
+
+# ── Phase 4: default suntime_model flip ─────────────────────────────────────
+from kwallpaper.config import _default_config, load_config
+
+
+def test_default_config_suntime_model_is_sun():
+    """Phase 4: the canonical default is the sun-position model."""
+    assert _default_config()["scheduling"]["suntime_model"] == "sun"
+
+
+def test_load_config_absent_suntime_model_defaults_to_sun(tmp_path):
+    """A config without the field (all pre-Phase-2 configs) picks up the
+    new default at load time — this is the whole migration."""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "location": {"timezone": "UTC", "latitude": 0.0, "longitude": 0.0},
+        "scheduling": {"cycle_interval": 60},
+    }))
+    config = load_config(str(path))
+    assert config["scheduling"]["suntime_model"] == "sun"
+
+
+def test_load_config_explicit_legacy_preserved(tmp_path):
+    """A user who explicitly chose the legacy model keeps it — the default
+    flip must never overwrite an existing value."""
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "scheduling": {"suntime_model": "legacy"},
+    }))
+    config = load_config(str(path))
+    assert config["scheduling"]["suntime_model"] == "legacy"
+
+
+def test_load_config_explicit_sun_preserved(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "scheduling": {"suntime_model": "sun"},
+    }))
+    config = load_config(str(path))
+    assert config["scheduling"]["suntime_model"] == "sun"
