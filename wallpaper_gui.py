@@ -44,6 +44,7 @@ except ImportError:
     PYQT6_AVAILABLE = False
 
 from kwallpaper.scheduler import SchedulerManager, create_scheduler
+from kwallpaper.schedule_preview import SchedulePreviewWidget
 from kwallpaper.wallpaper_changer import (
     load_config, save_config, DEFAULT_CONFIG_PATH,
     discover_themes, extract_theme,
@@ -786,6 +787,7 @@ class ThemesPage(QWidget):
     def __init__(self, config_path: str, parent=None):
         super().__init__(parent)
         self._cfg = config_path
+        self.schedule_preview = SchedulePreviewWidget()
         # Ensure config directories exist before any operations
         from kwallpaper.wallpaper_changer import ensure_config_dirs
         ensure_config_dirs()
@@ -871,6 +873,7 @@ class ThemesPage(QWidget):
         self.preview_info = QLabel()
         self.preview_info.setAlignment(Qt.AlignmentFlag.AlignCenter)
         rv.addWidget(self.preview_info)
+        rv.addWidget(self.schedule_preview)
 
         split.addWidget(right)
         # Set initial splitter sizes: left=150, right=850 (total 1000)
@@ -897,8 +900,23 @@ class ThemesPage(QWidget):
                     self._images_for(
                         cur.data(Qt.ItemDataRole.UserRole)))
             self.preview.start()
+            # The schedule marker may be stale after being hidden.
+            self.schedule_preview.refresh_now()
         else:
             self.preview.stop()
+
+    def refresh_schedule_preview(self):
+        """(Re)compute the 24-hour schedule preview for the selected theme.
+
+        No-op when nothing is selected.  Safe to call from any thread
+        context the GUI uses (selection, settings save).
+        """
+        item = self.theme_list.currentItem()
+        if item is None:
+            self.schedule_preview.clear()
+            return
+        theme_path = item.data(Qt.ItemDataRole.UserRole)
+        self.schedule_preview.refresh(self._cfg, theme_path)
 
     # ── slots -----------------------------------------------------------------
     def _on_select(self, cur, _prev):
@@ -906,6 +924,7 @@ class ThemesPage(QWidget):
             self.apply_btn.setEnabled(False)
             self.preview.set_images([])
             self.preview_info.clear()
+            self.schedule_preview.clear()
             return
         self.apply_btn.setEnabled(True)
         imgs = self._images_for(cur.data(Qt.ItemDataRole.UserRole))
@@ -915,6 +934,7 @@ class ThemesPage(QWidget):
             self.preview_info.setText(f"{len(imgs)} images")
         else:
             self.preview_info.clear()
+        self.refresh_schedule_preview()
     def _import(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Import Theme", "",
@@ -1852,6 +1872,8 @@ class WallpaperChangerWindow(QMainWindow):
         # worker for long.
         self.themes.preview._pool.waitForDone(1000)
         self.themes._pool.waitForDone(1000)
+        # Schedule preview pool (Themes tab).
+        self.themes.schedule_preview._cleanup()
         if self.sched.is_running():
             # wait=False: the scheduler's own thread pool handles draining;
             # blocking the GUI thread here could stall for the full cycle
