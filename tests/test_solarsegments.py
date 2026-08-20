@@ -11,7 +11,9 @@ from zoneinfo import ZoneInfo
 
 from kwallpaper.solarsegments import (
     IncompleteSegmentsError,
+    Segments,
     category_for,
+    image_at,
     segments_for_now,
     solar_segments,
 )
@@ -136,3 +138,114 @@ def test_category_incomplete_raises():
     now = datetime(2026, 6, 21, 12, 0, tzinfo=ZoneInfo("Arctic/Longyearbyen"))
     with pytest.raises(IncompleteSegmentsError):
         category_for(now, polar)
+
+
+#: WDD-style theme: 4 sunrise, 5 day, 4 sunset, 3 night images.
+THEME = {
+    "sunriseImageList": [1, 2, 3, 4],
+    "dayImageList": [5, 6, 7, 8, 9],
+    "sunsetImageList": [10, 11, 12, 13],
+    "nightImageList": [14, 15, 16],
+}
+
+
+def _syn_seg(dawn="05:00", ghe="06:00", gh="18:00",
+             dusk="19:00") -> Segments:
+    """Synthetic segments with clean hour boundaries (no astral needed)."""
+    def t(hhmm, off=0):
+        h, m = map(int, hhmm.split(":"))
+        return datetime(2026, 6, 21, h, m, tzinfo=TZ) + timedelta(days=off)
+    return Segments(day=DAY, dawn=t(dawn), golden_hour_end=t(ghe),
+                    golden_hour=t(gh), dusk=t(dusk), next_dawn=t(dawn, 1))
+
+
+S = _syn_seg()
+
+
+@pytest.mark.parametrize("hhmm,day,expected", [
+    # sunrise: [05:00, 06:00), 4 images -> 15 min each
+    ("05:00", 21, ("sunrise", 1)),
+    ("05:14", 21, ("sunrise", 1)),
+    ("05:15", 21, ("sunrise", 2)),
+    ("05:30", 21, ("sunrise", 3)),
+    ("05:45", 21, ("sunrise", 4)),
+    ("05:59", 21, ("sunrise", 4)),
+    # day: [06:00, 18:00), 5 images -> 2h24m each
+    ("06:00", 21, ("day", 5)),
+    ("08:24", 21, ("day", 6)),
+    ("10:48", 21, ("day", 7)),
+    ("13:12", 21, ("day", 8)),
+    ("15:36", 21, ("day", 9)),
+    ("17:59", 21, ("day", 9)),
+    # sunset: [18:00, 19:00), 4 images -> 15 min each
+    ("18:00", 21, ("sunset", 10)),
+    ("18:30", 21, ("sunset", 12)),
+    ("18:45", 21, ("sunset", 13)),
+    # night: [19:00, next 05:00), 3 images -> 4h each, wraps midnight
+    ("19:00", 21, ("night", 14)),
+    ("22:20", 21, ("night", 15)),
+    ("01:40", 22, ("night", 16)),
+    ("04:59", 22, ("night", 16)),
+])
+def test_image_spacing_per_segment(hhmm, day, expected):
+    h, m = map(int, hhmm.split(":"))
+    assert image_at(datetime(2026, 6, day, h, m, tzinfo=TZ), S, THEME) == expected
+
+
+def test_image_real_data_probes():
+    """Equal spacing against the real Phoenix 2026-06-21 segments
+    (pinned against astral 3.2)."""
+    seg = _phoenix_seg()
+    assert image_at(_at(12, 0), seg, THEME) == ("day", 7)
+    assert image_at(_at(23, 0), seg, THEME) == ("night", 14)
+    assert image_at(_at(0, 0, 22), seg, THEME) == ("night", 15)
+    assert image_at(_at(3, 0, 22), seg, THEME) == ("night", 16)
+    pre_dawn = _at(4, 30)
+    assert image_at(pre_dawn, segments_for_now(pre_dawn, TZ, LAT, LON),
+                    THEME) == ("night", 16)
+    assert image_at(_at(5, 0), seg, THEME) == ("sunrise", 1)
+    assert image_at(_at(19, 30), seg, THEME) == ("sunset", 11)
+
+
+def test_dedup_sunrise_list_equals_day_list():
+    """When sunriseImageList == dayImageList the sunrise segment is
+    absorbed into day: day images span [dawn, golden_hour)."""
+    theme = dict(THEME, sunriseImageList=[5, 6, 7, 8, 9])
+    assert image_at(_at(5, 30), S, theme) == ("day", 5)
+    assert image_at(_at(8, 0), S, theme) == ("day", 6)
+    assert image_at(_at(12, 0), S, theme) == ("day", 7)
+    assert image_at(_at(16, 0), S, theme) == ("day", 9)
+    # sunset segment unaffected
+    assert image_at(_at(18, 30), S, theme) == ("sunset", 12)
+    # category_for is astronomical and unaffected by dedup
+    assert category_for(_at(5, 30), S) == "sunrise"
+
+
+def test_dedup_sunset_list_equals_day_list():
+    theme = dict(THEME, sunsetImageList=[5, 6, 7, 8, 9])
+    # sunrise segment unaffected
+    assert image_at(_at(5, 30), S, theme) == ("sunrise", 3)
+    # day now spans [golden_hour_end, dusk)
+    assert image_at(_at(17, 0), S, theme) == ("day", 9)
+    assert image_at(_at(18, 30), S, theme) == ("day", 9)
+
+
+def test_dedup_both_lists_equal_day_list():
+    theme = dict(THEME, sunriseImageList=[5, 6, 7, 8, 9],
+                 sunsetImageList=[5, 6, 7, 8, 9])
+    assert image_at(_at(5, 30), S, theme) == ("day", 5)
+    assert image_at(_at(12, 0), S, theme) == ("day", 7)
+    assert image_at(_at(18, 30), S, theme) == ("day", 9)
+
+
+def test_image_empty_category_list_raises():
+    theme = dict(THEME, sunriseImageList=[])
+    with pytest.raises(ValueError, match="No images available in sunrise"):
+        image_at(_at(5, 30), S, theme)
+
+
+def test_image_incomplete_segments_raises():
+    polar = solar_segments(DAY, ZoneInfo("Arctic/Longyearbyen"), 78.22, 15.65)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=ZoneInfo("Arctic/Longyearbyen"))
+    with pytest.raises(IncompleteSegmentsError):
+        image_at(now, polar, THEME)

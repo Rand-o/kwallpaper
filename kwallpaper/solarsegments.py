@@ -20,7 +20,7 @@ back to the legacy model.
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Any, Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -153,3 +153,72 @@ def category_for(now: datetime, seg: Segments) -> str:
     if now < seg.dusk:
         return "sunset"
     return "night"
+
+
+def _effective_windows(seg: Segments,
+                       theme_data: Dict[str, Any]) -> Dict[str, Tuple[datetime, datetime]]:
+    """Image-selection windows per category, applying the WDD dedup rule.
+
+    If ``sunriseImageList == dayImageList`` (non-empty), the sunrise
+    segment is absorbed into day (day starts at dawn instead of
+    golden_hour_end); same for sunset vs day (day ends at dusk instead
+    of golden_hour).  This prevents showing the same image twice
+    back-to-back across a segment boundary.
+    """
+    sunrise_list = theme_data.get("sunriseImageList", []) or []
+    sunset_list = theme_data.get("sunsetImageList", []) or []
+    day_list = theme_data.get("dayImageList", []) or []
+
+    day_start = seg.golden_hour_end
+    day_end = seg.golden_hour
+    sunrise_absorbed = bool(sunrise_list) and sunrise_list == day_list
+    sunset_absorbed = bool(sunset_list) and sunset_list == day_list
+    if sunrise_absorbed:
+        day_start = seg.dawn
+    if sunset_absorbed:
+        day_end = seg.dusk
+
+    windows: Dict[str, Tuple[datetime, datetime]] = {
+        "day": (day_start, day_end),
+        "night": (seg.dusk, seg.next_dawn),
+    }
+    if not sunrise_absorbed:
+        windows["sunrise"] = (seg.dawn, seg.golden_hour_end)
+    if not sunset_absorbed:
+        windows["sunset"] = (seg.golden_hour, seg.dusk)
+    return windows
+
+
+def image_at(now: datetime, seg: Segments,
+             theme_data: Dict[str, Any]) -> Tuple[str, int]:
+    """Select (category, image_value) for ``now``.
+
+    The effective window of each category is divided equally among its
+    images: image at list index *i* displays during
+    ``[start + i*duration/n, start + (i+1)*duration/n)``.  Returns the
+    raw value from the category's image list (an int index for standard
+    themes).
+
+    Raises:
+        IncompleteSegmentsError: when ``seg.complete`` is False.
+        ValueError: when ``now`` falls in a category whose image list
+            is empty, or outside all segment windows.
+    """
+    if not seg.complete:
+        raise IncompleteSegmentsError(
+            f"sun segments incomplete for {seg.day}; fall back to legacy model")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=seg.dawn.tzinfo)
+    for category, (start, end) in _effective_windows(seg, theme_data).items():
+        if start <= now < end:
+            image_list = theme_data.get(f"{category}ImageList", []) or []
+            if not image_list:
+                raise ValueError(
+                    f"No images available in {category} category")
+            duration = (end - start).total_seconds()
+            elapsed = (now - start).total_seconds()
+            position = elapsed / duration
+            idx = int((position + 1e-9) * len(image_list))
+            idx = max(0, min(idx, len(image_list) - 1))
+            return category, image_list[idx]
+    raise ValueError(f"now {now} outside all segment windows of {seg.day}")
