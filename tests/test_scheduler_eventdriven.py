@@ -422,3 +422,44 @@ class TestRearmSequence:
             assert called_args.config == cfg_sun
             assert called_args.theme_path is None
             assert called_args.time is None
+
+
+class TestModelSwitchReload:
+    """Live model switches via reload_cycle_interval (Phase 3 GUI)."""
+
+    def test_legacy_to_sun_adds_safety_task(self, cfg_legacy):
+        mgr = _make_manager(cfg_legacy, running=True)
+        mgr.scheduler = MagicMock()
+        # Simulate a running legacy scheduler: interval cycle job, no
+        # safety job.
+        mgr._tasks = {'cycle': {'interval': 60, 'type': 'interval'}}
+        # Switch to sun in the config the manager was built with.
+        cfg = json.loads(Path(cfg_legacy).read_text())
+        cfg["scheduling"]["suntime_model"] = "sun"
+        Path(cfg_legacy).write_text(json.dumps(cfg))
+        with patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "DateTrigger"), \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            assert mgr.reload_cycle_interval() is True
+        assert 'safety' in mgr._tasks
+        assert 'cycle' in mgr._tasks  # re-armed one-shot
+        assert it.call_args.kwargs.get("seconds") == 600  # safety interval
+
+    def test_sun_to_legacy_removes_safety_task(self, cfg_sun):
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        # Simulate a running sun-mode scheduler: one-shot cycle job +
+        # safety job.
+        mgr._tasks = {'cycle': {'next_change': FIXED_NEXT.isoformat(),
+                                'type': 'date'},
+                      'safety': {'interval': 600, 'type': 'interval'}}
+        # Switch to legacy in the config the manager was built with.
+        cfg = json.loads(Path(cfg_sun).read_text())
+        cfg["scheduling"]["suntime_model"] = "legacy"
+        Path(cfg_sun).write_text(json.dumps(cfg))
+        with patch.object(scheduler_module, "IntervalTrigger") as it:
+            assert mgr.reload_cycle_interval() is True
+        assert 'safety' not in mgr._tasks
+        assert 'cycle' in mgr._tasks  # interval job re-added
+        assert it.call_args.kwargs.get("seconds") == 60  # cycle interval

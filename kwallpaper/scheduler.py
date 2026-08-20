@@ -325,11 +325,39 @@ class SchedulerManager:
             config = self._get_config()
             if config.get('suntime_model') == 'sun':
                 # Sun mode: re-arm the one-shot from the (possibly
-                # changed) config.  An interval fallback armed during
-                # incomplete segments picks up the new cycle_interval on
-                # the next re-arm.
+                # changed) config, and make sure the safety-net job
+                # exists (a live legacy→sun switch would otherwise run
+                # without it).
+                if 'safety' not in self._tasks:
+                    safety = config.get('safety_interval', 600)
+                    try:
+                        self.scheduler.add_job(
+                            self._run_cycle_task,
+                            trigger=IntervalTrigger(seconds=safety),
+                            id='safety_task',
+                            name='Cycle Safety Net Task',
+                            replace_existing=True,
+                        )
+                        self._tasks['safety'] = {'interval': safety,
+                                                 'type': 'interval'}
+                    except Exception as e:
+                        logger.error(
+                            f"Failed to add safety job on model switch: "
+                            f"{e}")
+                # An interval fallback armed during incomplete segments
+                # picks up the new cycle_interval on the next re-arm.
                 self._rearm_next_change()
                 return True
+            # Legacy mode: drop the sun-mode safety job (a live
+            # sun→legacy switch would otherwise leave it ticking
+            # forever), then re-add the interval job with the new
+            # interval.
+            if 'safety' in self._tasks:
+                try:
+                    self.scheduler.remove_job('safety_task')
+                except Exception:
+                    pass
+                del self._tasks['safety']
             interval = config.get('interval', 60)
             if 'cycle' in self._tasks:
                 self.scheduler.add_job(
