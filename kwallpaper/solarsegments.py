@@ -222,3 +222,23 @@ def image_at(now: datetime, seg: Segments,
             idx = max(0, min(idx, len(image_list) - 1))
             return category, image_list[idx]
     raise ValueError(f"now {now} outside all segment windows of {seg.day}")
+
+
+def segments_for_config(config_path: str,
+                        now: Optional[datetime] = None) -> Segments:
+    """Segments for the configured location at ``now``.
+
+    Loads latitude/longitude/timezone from the config file (normalized
+    to defaults by ``load_config``).  ``now`` defaults to the current
+    time in the configured timezone.
+    """
+    from kwallpaper.config import load_config
+
+    config = load_config(config_path)
+    loc = config.get("location", {})
+    tz = ZoneInfo(loc.get("timezone", "America/Phoenix"))
+    lat = float(loc.get("latitude", 33.4484))
+    lon = float(loc.get("longitude", -112.074))
+    if now is None:
+        now = datetime.now(tz)
+    return segments_for_now(now, tz, lat, lon)

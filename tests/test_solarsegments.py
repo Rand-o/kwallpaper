@@ -9,11 +9,14 @@ from datetime import date, datetime, timedelta
 import pytest
 from zoneinfo import ZoneInfo
 
+import json
+
 from kwallpaper.solarsegments import (
     IncompleteSegmentsError,
     Segments,
     category_for,
     image_at,
+    segments_for_config,
     segments_for_now,
     solar_segments,
 )
@@ -249,3 +252,37 @@ def test_image_incomplete_segments_raises():
     now = datetime(2026, 6, 21, 12, 0, tzinfo=ZoneInfo("Arctic/Longyearbyen"))
     with pytest.raises(IncompleteSegmentsError):
         image_at(now, polar, THEME)
+
+
+def _write_config(tmp_path, model=None):
+    """Write a valid v2 config; optionally set scheduling.suntime_model."""
+    sched = {"cycle_interval": 60, "run_cycle": True,
+             "daily_shuffle_enabled": True}
+    if model is not None:
+        sched["suntime_model"] = model
+    cfg = tmp_path / "config.json"
+    cfg.write_text(json.dumps({
+        "version": 2,
+        "appearance": {"theme_mode": "light"},
+        "autostart": {"enabled": True, "start_scheduler_on_launch": False},
+        "location": {"latitude": 33.4484, "longitude": -112.074,
+                     "timezone": "America/Phoenix"},
+        "scheduling": sched,
+        "theme": {"last_applied": ""},
+    }))
+    return cfg
+
+
+def test_segments_for_config_phoenix(tmp_path):
+    cfg = _write_config(tmp_path)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=TZ)
+    seg = segments_for_config(str(cfg), now=now)
+    assert seg.day == DAY
+    assert seg.dawn.strftime("%H:%M") == "04:49"
+    assert seg.complete is True
+
+
+def test_segments_for_config_pre_dawn_previous_day(tmp_path):
+    cfg = _write_config(tmp_path)
+    now = datetime(2026, 6, 21, 3, 0, tzinfo=TZ)
+    assert segments_for_config(str(cfg), now=now).day == date(2026, 6, 20)
