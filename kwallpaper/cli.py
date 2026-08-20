@@ -172,6 +172,7 @@ def run_change_command(args) -> int:
                 image_path = select_image_for_specific_time(args.time, theme_path, str(config_path_obj))
                 print(f"Changing wallpaper to: {Path(image_path).name}")
                 if change_wallpaper(image_path):
+                    _persist_last_applied_image(str(config_path_obj), image_path)
                     print("Wallpaper changed successfully!")
                     return 0
                 else:
@@ -243,6 +244,9 @@ def run_change_command(args) -> int:
         print(f"Changing wallpaper to: {image_path}")
 
         if change_wallpaper(image_path):
+            # Persist the last-applied image now that the wallpaper is up
+            # (skip-if-unchanged state; "persist after success" rule).
+            _persist_last_applied_image(str(config_path_obj), image_path)
             # Persist shuffle state only now that the wallpaper is up, so a
             # failed change doesn't advance the list (the next run retries
             # the same theme instead of skipping it).
@@ -297,6 +301,34 @@ def resolve_current_theme_dir(config: dict) -> Optional[Path]:
     return None
 
 
+def _same_image_path(a: str, b: str) -> bool:
+    """True when both non-empty paths point at the same file (resolved)."""
+    if not a or not b:
+        return False
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return a == b
+
+
+def _persist_last_applied_image(config_path: str, image_path: str) -> None:
+    """Persist ``theme.last_applied_image`` after a successful wallpaper
+    change.
+
+    Mirrors the shuffle-list "persist after success" rule: a failed
+    change never updates the state, so the next run retries the same
+    image.  Persistence failure is non-fatal (the wallpaper is already
+    up); the worst case is one extra D-Bus call on the next run.
+    """
+    try:
+        config = load_config(config_path)
+        config.setdefault('theme', {})['last_applied_image'] = image_path
+        save_config(config_path, config)
+    except Exception as e:
+        print(f"Warning: failed to persist last-applied image: {e}",
+              file=sys.stderr)
+
+
 def run_cycle_command(args) -> int:
     """Cycle to next image in current theme based on current time.
 
@@ -341,8 +373,17 @@ def run_cycle_command(args) -> int:
         image_path = select_image_for_time_cli(str(theme_dir), str(config_path_obj))
         image_path_obj = Path(image_path)
 
+        # Skip-if-unchanged: no D-Bus call when the selected image is the
+        # one we last applied (persisted in config; survives restarts).
+        # The daily-shuffle path above (run_change_command) always applies.
+        last_applied_image = config.get('theme', {}).get('last_applied_image', '')
+        if _same_image_path(last_applied_image, str(image_path_obj)):
+            print(f"No change: already showing {image_path_obj.name}")
+            return 0
+
         if change_wallpaper(str(image_path_obj)):
             print(f"Changed wallpaper to {image_path_obj.name}")
+            _persist_last_applied_image(str(config_path_obj), str(image_path_obj))
             return 0
         else:
             print(f"Failed to change wallpaper to {image_path_obj.name}", file=sys.stderr)

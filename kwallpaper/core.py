@@ -331,6 +331,9 @@ def apply_theme(theme_path: str, config_path: Optional[str] = None,
     try:
         config = load_config(str(cfg_path))
         config.setdefault('theme', {})['last_applied'] = name
+        # Last-applied image path (skip-if-unchanged state); persisted
+        # only now that the wallpaper is up ("persist after success").
+        config.setdefault('theme', {})['last_applied_image'] = image_path
         save_config(str(cfg_path), config)
         if not theme_path:
             # Shuffler mode: persist shuffle state now that the wallpaper
