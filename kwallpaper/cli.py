@@ -14,11 +14,13 @@ import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
+from typing import Optional
 
 from kwallpaper.config import (
     DEFAULT_CONFIG_PATH,
     DEFAULT_THEMES_DIR,
     load_config,
+    save_config,
 )
 from kwallpaper.shuffle_list_manager import (
     check_day_passed,
@@ -271,6 +273,30 @@ def run_change_command(args) -> int:
 # CYCLE COMMAND
 # ============================================================================
 
+def resolve_current_theme_dir(config: dict) -> Optional[Path]:
+    """Resolve the theme directory the next cycle run will use.
+
+    Prefers the theme of the current D-Bus wallpaper; falls back to the
+    last-applied theme from config (covers the case where the wallpaper
+    was changed outside kWallpaper, e.g. the user picked a solid colour
+    or a random image in Plasma settings).  Returns None when neither
+    resolves to an existing theme directory.
+    """
+    current_wallpaper = get_current_wallpaper()
+    if current_wallpaper:
+        # Extract theme name from the wallpaper path
+        theme_name = Path(current_wallpaper).parent.name
+        candidate = DEFAULT_THEMES_DIR / theme_name
+        if candidate.exists():
+            return candidate
+    last_applied = config.get('theme', {}).get('last_applied', '')
+    if last_applied:
+        candidate = DEFAULT_THEMES_DIR / last_applied
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def run_cycle_command(args) -> int:
     """Cycle to next image in current theme based on current time.
 
@@ -298,27 +324,9 @@ def run_cycle_command(args) -> int:
                 print("New day detected - shuffling to next theme")
                 return run_change_command(args)
 
-        # Get current wallpaper path
-        current_wallpaper = get_current_wallpaper()
-
-        theme_dir = None
-
-        if current_wallpaper:
-            # Extract theme name from the wallpaper path
-            theme_name = Path(current_wallpaper).parent.name
-            candidate = DEFAULT_THEMES_DIR / theme_name
-            if candidate.exists():
-                theme_dir = candidate
-
-        # Fall back to the last-applied theme from config (covers the case
-        # where the wallpaper was changed outside kWallpaper, e.g. the user
-        # picked a solid colour or a random image in Plasma settings).
-        if theme_dir is None:
-            last_applied = config.get('theme', {}).get('last_applied', '')
-            if last_applied:
-                candidate = DEFAULT_THEMES_DIR / last_applied
-                if candidate.exists():
-                    theme_dir = candidate
+        # Resolve the theme the run will use (current D-Bus wallpaper
+        # first, then the last-applied theme from config).
+        theme_dir = resolve_current_theme_dir(config)
 
         if theme_dir is None:
             print(

@@ -206,3 +206,39 @@ class TestNextChangeTimeWalkForward:
         with pytest.raises(IncompleteSegmentsError):
             next_change_time(datetime(2026, 6, 22, 6, 0, tzinfo=TZ),
                              _syn_seg(), THEME)
+
+
+class TestResolveCurrentThemeDir:
+    def test_prefers_wallpaper_theme(self, tmp_path, monkeypatch):
+        themes = tmp_path / "themes"
+        (themes / "Foo").mkdir(parents=True)
+        monkeypatch.setattr(cli_module, "DEFAULT_THEMES_DIR", themes)
+        monkeypatch.setattr(cli_module, "get_current_wallpaper",
+                            lambda: str(themes / "Foo" / "sun_01.jpg"))
+        config = {"theme": {"last_applied": "Bar"}}
+        assert cli_module.resolve_current_theme_dir(config) == themes / "Foo"
+
+    def test_falls_back_to_last_applied(self, tmp_path, monkeypatch):
+        themes = tmp_path / "themes"
+        (themes / "Bar").mkdir(parents=True)
+        monkeypatch.setattr(cli_module, "DEFAULT_THEMES_DIR", themes)
+        monkeypatch.setattr(cli_module, "get_current_wallpaper", lambda: None)
+        config = {"theme": {"last_applied": "Bar"}}
+        assert cli_module.resolve_current_theme_dir(config) == themes / "Bar"
+
+    def test_none_when_nothing_resolves(self, tmp_path, monkeypatch):
+        themes = tmp_path / "themes"
+        themes.mkdir()
+        monkeypatch.setattr(cli_module, "DEFAULT_THEMES_DIR", themes)
+        monkeypatch.setattr(cli_module, "get_current_wallpaper", lambda: None)
+        assert cli_module.resolve_current_theme_dir({"theme": {}}) is None
+        assert cli_module.resolve_current_theme_dir({}) is None
+
+    def test_ignores_nonexistent_dirs(self, tmp_path, monkeypatch):
+        themes = tmp_path / "themes"
+        themes.mkdir()
+        monkeypatch.setattr(cli_module, "DEFAULT_THEMES_DIR", themes)
+        monkeypatch.setattr(cli_module, "get_current_wallpaper",
+                            lambda: "/nonexistent/Gone/sun_01.jpg")
+        config = {"theme": {"last_applied": "AlsoGone"}}
+        assert cli_module.resolve_current_theme_dir(config) is None
