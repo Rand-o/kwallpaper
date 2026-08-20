@@ -242,3 +242,51 @@ class TestResolveCurrentThemeDir:
                             lambda: "/nonexistent/Gone/sun_01.jpg")
         config = {"theme": {"last_applied": "AlsoGone"}}
         assert cli_module.resolve_current_theme_dir(config) is None
+
+
+class TestNextChangeTimeForConfig:
+    """The core seam the scheduler calls: config path -> next change time."""
+
+    def _setup(self, tmp_path, monkeypatch, last_applied="TestTheme",
+               complete=True):
+        themes = tmp_path / "themes"
+        t = themes / "TestTheme"
+        t.mkdir(parents=True)
+        (t / "theme.json").write_text(json.dumps(THEME))
+        for i in range(1, 17):
+            (t / f"sun_{i:02d}.jpg").write_bytes(b"\xff\xd8\xff\xe0fake")
+        monkeypatch.setattr(cli_module, "DEFAULT_THEMES_DIR", themes)
+        monkeypatch.setattr(cli_module, "get_current_wallpaper", lambda: None)
+        monkeypatch.setattr(solarsegments, "solar_segments",
+                            lambda day, tz, lat, lon: _syn_seg(day, complete))
+        cfg = tmp_path / "config.json"
+        cfg.write_text(json.dumps({
+            "version": 2,
+            "location": {"latitude": 33.4484, "longitude": -112.074,
+                         "timezone": "America/Phoenix"},
+            "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                           "daily_shuffle_enabled": True,
+                           "suntime_model": "sun"},
+            "theme": {"last_applied": last_applied},
+        }))
+        return str(cfg)
+
+    def test_returns_next_boundary(self, tmp_path, monkeypatch):
+        cfg = self._setup(tmp_path, monkeypatch)
+        # now 05:30 -> image_at -> (day, 6); image 6's window is
+        # [05:24, 05:33) -> next change 05:33.
+        result = core.next_change_time_for_config(
+            cfg, now=datetime(2026, 6, 21, 5, 30, tzinfo=TZ))
+        assert result == datetime(2026, 6, 21, 5, 33, tzinfo=TZ)
+
+    def test_no_theme_raises_value_error(self, tmp_path, monkeypatch):
+        cfg = self._setup(tmp_path, monkeypatch, last_applied="")
+        with pytest.raises(ValueError, match="no theme available"):
+            core.next_change_time_for_config(
+                cfg, now=datetime(2026, 6, 21, 5, 30, tzinfo=TZ))
+
+    def test_incomplete_segments_raise(self, tmp_path, monkeypatch):
+        cfg = self._setup(tmp_path, monkeypatch, complete=False)
+        with pytest.raises(IncompleteSegmentsError):
+            core.next_change_time_for_config(
+                cfg, now=datetime(2026, 6, 21, 5, 30, tzinfo=TZ))

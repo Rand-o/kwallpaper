@@ -347,3 +347,49 @@ def apply_theme(theme_path: str, config_path: Optional[str] = None,
 
     return ApplyResult(True, name, image_path,
                        f"Applied {name} ({Path(image_path).name})")
+
+
+def next_change_time_for_config(config_path: str,
+                                now: Optional[datetime] = None) -> datetime:
+    """Next wallpaper-change instant for the sun-position model.
+
+    Resolves the theme the next cycle run will use (current D-Bus
+    wallpaper first, then config ``theme.last_applied``), computes the
+    sun segments for the configured location, and returns the next image
+    boundary strictly after ``now`` (default: current time in the
+    configured timezone).
+
+    The function-level imports keep core and cli import-decoupled
+    (cli already imports core inside functions; keeping the reverse
+    direction function-level too avoids any import-order coupling).
+
+    Raises:
+        IncompleteSegmentsError: sun segments incomplete (polar
+            day/night) — the caller (scheduler) falls back to the
+            interval job.
+        ValueError: no theme can be resolved, or the theme's image
+            lists are inconsistent with the current time (empty
+            category list).
+    """
+    from kwallpaper.cli import resolve_current_theme_dir
+    from kwallpaper.selection import load_theme_data
+    from kwallpaper.solarsegments import (
+        image_at,
+        next_change_time,
+        segments_for_config,
+    )
+
+    config = load_config(config_path)
+    tz = ZoneInfo(config.get('location', {}).get('timezone', 'UTC'))
+    if now is None:
+        now = datetime.now(tz)
+
+    theme_dir = resolve_current_theme_dir(config)
+    if theme_dir is None:
+        raise ValueError(
+            "no theme available (apply a theme first); cannot compute "
+            "the next change time")
+    theme_data = load_theme_data(theme_dir)
+    seg = segments_for_config(config_path, now=now)
+    _category, current_image = image_at(now, seg, theme_data)
+    return next_change_time(now, seg, theme_data, current_image)
