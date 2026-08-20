@@ -31,10 +31,13 @@ if "apscheduler" not in sys.modules:
         _background = types.ModuleType("apscheduler.schedulers.background")
         _triggers = types.ModuleType("apscheduler.triggers")
         _interval = types.ModuleType("apscheduler.triggers.interval")
+        _date = types.ModuleType("apscheduler.triggers.date")
         _background.BackgroundScheduler = object
         _interval.IntervalTrigger = object
+        _date.DateTrigger = object
         _schedulers.background = _background
         _triggers.interval = _interval
+        _triggers.date = _date
         _aps.schedulers = _schedulers
         _aps.triggers = _triggers
         sys.modules.update({
@@ -43,6 +46,7 @@ if "apscheduler" not in sys.modules:
             "apscheduler.schedulers.background": _background,
             "apscheduler.triggers": _triggers,
             "apscheduler.triggers.interval": _interval,
+            "apscheduler.triggers.date": _date,
         })
 
 from kwallpaper import scheduler as scheduler_module

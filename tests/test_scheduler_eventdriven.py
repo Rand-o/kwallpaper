@@ -221,3 +221,113 @@ class TestSkipIfUnchanged:
         assert not result.success
         saved = json.loads(Path(cfg).read_text())
         assert saved.get("theme", {}).get("last_applied_image", "") == ""
+
+
+@pytest.fixture
+def cfg_sun(tmp_path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "version": 2,
+        "location": {"latitude": 33.4, "longitude": -112.0,
+                     "timezone": "America/Phoenix"},
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                       "daily_shuffle_enabled": True, "suntime_model": "sun"},
+    }))
+    return str(p)
+
+
+@pytest.fixture
+def cfg_legacy(tmp_path):
+    # No suntime_model key: normalize_config fills "legacy" (the default).
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({
+        "version": 2,
+        "location": {"latitude": 33.4, "longitude": -112.0,
+                     "timezone": "America/Phoenix"},
+        "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                       "daily_shuffle_enabled": True},
+    }))
+    return str(p)
+
+
+class TestSunModeStart:
+    def test_sun_mode_start_arms_one_shot_and_safety(self, cfg_sun):
+        mgr = _make_manager(cfg_sun, running=False)
+        with patch.object(scheduler_module, "BackgroundScheduler") as bs, \
+             patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT) as nct:
+            assert mgr.start() is True
+            calls = {c.kwargs.get("id"): c
+                     for c in bs.return_value.add_job.call_args_list}
+            assert set(calls) == {"cycle_task", "safety_task"}
+            # safety net: 600s interval (default)
+            safety = calls["safety_task"]
+            assert safety.kwargs["trigger"] is it.return_value
+            assert it.call_args.kwargs.get("seconds") == 600
+            # one-shot: DateTrigger at the computed instant, 1-day grace
+            one = calls["cycle_task"]
+            assert dt.call_args.kwargs.get("run_date") is FIXED_NEXT
+            assert one.kwargs["misfire_grace_time"] == 86400
+            assert one.kwargs["replace_existing"] is True
+            nct.assert_called_once_with(cfg_sun)
+        mgr.scheduler = None
+        mgr._is_running = False
+
+    def test_legacy_mode_start_unchanged(self, cfg_legacy):
+        mgr = _make_manager(cfg_legacy, running=False)
+        with patch.object(scheduler_module, "BackgroundScheduler") as bs, \
+             patch.object(scheduler_module, "DateTrigger") as dt, \
+             patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "next_change_time_for_config") as nct:
+            assert mgr.start() is True
+            calls = {c.kwargs.get("id"): c
+                     for c in bs.return_value.add_job.call_args_list}
+            assert set(calls) == {"cycle_task"}
+            assert it.call_args.kwargs.get("seconds") == 60
+            assert calls["cycle_task"].kwargs["trigger"] is it.return_value
+            dt.assert_not_called()
+            nct.assert_not_called()
+        mgr.scheduler = None
+        mgr._is_running = False
+
+    def test_sun_mode_custom_safety_interval(self, tmp_path):
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps({
+            "version": 2,
+            "location": {"latitude": 33.4, "longitude": -112.0,
+                         "timezone": "America/Phoenix"},
+            "scheduling": {"cycle_interval": 60, "run_cycle": True,
+                           "daily_shuffle_enabled": True,
+                           "suntime_model": "sun", "safety_interval": 120},
+        }))
+        mgr = _make_manager(str(p), running=False)
+        with patch.object(scheduler_module, "BackgroundScheduler") as bs, \
+             patch.object(scheduler_module, "DateTrigger"), \
+             patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            assert mgr.start() is True
+            assert it.call_args.kwargs.get("seconds") == 120
+        mgr.scheduler = None
+        mgr._is_running = False
+
+    def test_sun_mode_run_cycle_disabled_no_jobs(self, tmp_path):
+        p = tmp_path / "config.json"
+        p.write_text(json.dumps({
+            "version": 2,
+            "location": {"latitude": 33.4, "longitude": -112.0,
+                         "timezone": "America/Phoenix"},
+            "scheduling": {"cycle_interval": 60, "run_cycle": False,
+                           "daily_shuffle_enabled": True,
+                           "suntime_model": "sun"},
+        }))
+        mgr = _make_manager(str(p), running=False)
+        with patch.object(scheduler_module, "BackgroundScheduler") as bs, \
+             patch.object(scheduler_module, "DateTrigger"), \
+             patch.object(scheduler_module, "IntervalTrigger"):
+            assert mgr.start() is False
+            bs.return_value.add_job.assert_not_called()
+        mgr.scheduler = None
+        mgr._is_running = False

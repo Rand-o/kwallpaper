@@ -24,14 +24,17 @@ from typing import Optional, Callable, Any
 
 try:
     from apscheduler.schedulers.background import BackgroundScheduler
+    from apscheduler.triggers.date import DateTrigger
     from apscheduler.triggers.interval import IntervalTrigger
     APSCHEDULER_AVAILABLE = True
 except ImportError:
     APSCHEDULER_AVAILABLE = False
     BackgroundScheduler = None
+    DateTrigger = None
     IntervalTrigger = None
 
 from kwallpaper.config import load_config, DEFAULT_CONFIG_PATH
+from kwallpaper.core import next_change_time_for_config
 from kwallpaper.cli import run_cycle_command
 
 logger = logging.getLogger(__name__)
@@ -119,6 +122,8 @@ class SchedulerManager:
             # interval is always ``scheduling.cycle_interval``.
             return {
                 'interval': scheduling.get('cycle_interval', 60),
+                'safety_interval': scheduling.get('safety_interval', 600),
+                'suntime_model': scheduling.get('suntime_model', 'legacy'),
                 'daily_shuffle_enabled': scheduling.get('daily_shuffle_enabled', True),
                 'run_cycle': scheduling.get('run_cycle', True),
                 'timezone': location.get('timezone', 'UTC'),
@@ -127,6 +132,8 @@ class SchedulerManager:
             logger.warning(f"Failed to load config: {e}. Using defaults.")
             return {
                 'interval': 60,
+                'safety_interval': 600,
+                'suntime_model': 'legacy',
                 'daily_shuffle_enabled': True,
                 'run_cycle': True,
                 'timezone': 'UTC',
@@ -157,6 +164,58 @@ class SchedulerManager:
         finally:
             self._lock.release()
 
+    def _rearm_next_change(self) -> None:
+        """Re-arm the one-shot cycle job at the next image boundary.
+
+        Sun mode only (no-op for the legacy model, whose interval job
+        never needs re-arming).  Called after every cycle run — one-shot
+        or safety tick — and once from start().
+
+        When the next change time cannot be computed (incomplete sun
+        segments — polar day/night — or no resolvable theme), the cycle
+        job falls back to the legacy-style interval trigger for the next
+        run; the re-arm after that run retries the sun model, so a polar
+        day self-heals once the segments are complete again.
+        """
+        if self.scheduler is None:
+            return
+        config = self._get_config()
+        if config.get('suntime_model') != 'sun':
+            return
+        try:
+            next_dt = next_change_time_for_config(self.config_path)
+        except Exception as e:
+            self.log(
+                f"Could not compute next change time ({e}); "
+                f"falling back to {config.get('interval', 60)}s interval "
+                "until the next run",
+                logging.WARNING)
+            self.scheduler.add_job(
+                self._run_cycle_task,
+                trigger=IntervalTrigger(seconds=config.get('interval', 60)),
+                id='cycle_task',
+                name='Cycle Wallpaper Task (interval fallback)',
+                replace_existing=True,
+            )
+            self._tasks['cycle'] = {
+                'interval': config.get('interval', 60),
+                'type': 'interval-fallback'}
+            return
+        # A generous misfire grace (1 day) makes a late one-shot — e.g.
+        # after suspend/resume — fire immediately instead of being
+        # dropped (APScheduler's default grace is 1 second).
+        self.scheduler.add_job(
+            self._run_cycle_task,
+            trigger=DateTrigger(run_date=next_dt),
+            id='cycle_task',
+            name='Cycle Wallpaper Task (next change)',
+            replace_existing=True,
+            misfire_grace_time=86400,
+        )
+        self._tasks['cycle'] = {'next_change': next_dt.isoformat(),
+                                'type': 'date'}
+        self.log(f"Next wallpaper change at {next_dt.isoformat()}")
+
     # ── lifecycle ────────────────────────────────────────────────────────
     def start(self) -> bool:
         if not APSCHEDULER_AVAILABLE:
@@ -179,16 +238,37 @@ class SchedulerManager:
 
             interval = config.get('interval', 60)
             if config.get('run_cycle', True):
-                self.scheduler.add_job(
-                    self._run_cycle_task,
-                    trigger=IntervalTrigger(seconds=interval),
-                    id='cycle_task',
-                    name='Cycle Wallpaper Task',
-                    replace_existing=True
-                )
-                self._tasks['cycle'] = {'interval': interval, 'type': 'interval'}
-                self.log(f"Added cycle task: runs every {interval} seconds"
-                         " (includes daily shuffle check)")
+                if config.get('suntime_model') == 'sun':
+                    # Event-driven: one-shot at the exact next change
+                    # (armed by _rearm_next_change, re-armed after every
+                    # run) plus a coarse safety-net interval job for
+                    # clock jumps, resume-from-sleep, missed runs and the
+                    # daily shuffle check.
+                    safety = config.get('safety_interval', 600)
+                    self.scheduler.add_job(
+                        self._run_cycle_task,
+                        trigger=IntervalTrigger(seconds=safety),
+                        id='safety_task',
+                        name='Cycle Safety Net Task',
+                        replace_existing=True,
+                    )
+                    self._tasks['safety'] = {'interval': safety,
+                                             'type': 'interval'}
+                    self.log(f"Added safety-net task: runs every {safety} "
+                             "seconds (includes daily shuffle check)")
+                    self._rearm_next_change()
+                else:
+                    self.scheduler.add_job(
+                        self._run_cycle_task,
+                        trigger=IntervalTrigger(seconds=interval),
+                        id='cycle_task',
+                        name='Cycle Wallpaper Task',
+                        replace_existing=True
+                    )
+                    self._tasks['cycle'] = {'interval': interval,
+                                            'type': 'interval'}
+                    self.log(f"Added cycle task: runs every {interval} seconds"
+                             " (includes daily shuffle check)")
 
             self.scheduler.start()
             # Check if at least one task was added
