@@ -29,7 +29,7 @@ from kwallpaper.suntime import (
     _night_now_for_pos,
 )
 from kwallpaper.solarsegments import image_at, segments_for_config
-from kwallpaper.themes import extract_theme, normalize_image_lists
+from kwallpaper.themes import extract_theme, image_files_for, normalize_image_lists
 
 
 def find_theme_json(theme_path_obj: Path) -> Path:
@@ -60,35 +60,18 @@ def _resolve_theme_dir(theme_path: str) -> Path:
 
 def _match_image_file(theme_path_obj: Path, image_index: int,
                       theme_data: Dict[str, Any]) -> str:
-    """Find the image file for a 1-based index in a theme directory."""
-    # Pattern: imageFilename contains index, e.g., "24hr-Tahoe-2026_*.jpeg"
-    filename_pattern = theme_data.get("imageFilename", "*.jpg")
+    """Find the image file for a 1-based index in a theme directory.
 
-    pattern_base = Path(filename_pattern).stem if filename_pattern else "theme"
-    pattern_ext = Path(filename_pattern).suffix if filename_pattern else ".jpg"
-
-    # Try to find files matching pattern
-    image_files = list(theme_path_obj.glob(filename_pattern))
-
-    # If pattern doesn't match, try numbered files
-    if not image_files:
-        numbered_files = []
-        for i in range(1, 100):
-            numbered_files.append(theme_path_obj / f"{pattern_base}_{i}{pattern_ext}")
-        image_files = [f for f in numbered_files if f.exists()]
+    Uses ``themes.image_files_for`` for discovery (glob pattern with
+    numbered-file fallback, numeric sort) — the same list that import
+    validation checks, so selection and validation can never disagree.
+    """
+    image_files = image_files_for(theme_path_obj, theme_data)
 
     if not image_files:
         raise FileNotFoundError(
             f"Image file not found for index {image_index} in theme '{theme_data.get('displayName')}'"
         )
-
-    # Sort files numerically by extracting index from filename
-    def get_img_idx(f):
-        try:
-            return int(f.stem.split('_')[-1])
-        except Exception:
-            return 0
-    image_files.sort(key=get_img_idx)
 
     # Find the file at the correct index
     if image_index <= len(image_files):

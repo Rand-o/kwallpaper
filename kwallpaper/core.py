@@ -19,6 +19,7 @@ import json
 import logging
 import random
 import shutil
+import tempfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime
@@ -43,7 +44,9 @@ from kwallpaper.selection import (
 from kwallpaper.themes import (
     discover_themes,
     extract_theme,
+    normalize_image_lists,
     resolve_theme_path,
+    validate_theme_images,
 )
 from kwallpaper.wallpaper import change_wallpaper
 from kwallpaper.shuffle_list_manager import (
@@ -87,54 +90,64 @@ def set_wallpaper(image_path: str) -> bool:
 # ============================================================================
 
 def import_theme(zip_path: str) -> dict:
-    """Import a .ddw/.zip theme into the themes directory.
+    """Import a theme from a .zip/.ddw file to the themes directory.
 
-    Returns the extract_theme() metadata dict (extract_dir, displayName, ...).
-    Raises FileNotFoundError / zipfile.BadZipFile on failure.
+    Validates that every image referenced by theme.json exists; a
+    rejected import leaves no partial theme behind.  Returns the theme
+    metadata dict.  Raises FileNotFoundError, FileExistsError, ValueError,
+    or zipfile.BadZipFile on failure.
     """
-    source_path = Path(zip_path).expanduser()
-    if not source_path.exists():
+    source = Path(zip_path).expanduser()
+    if not source.exists():
         raise FileNotFoundError(f"Theme not found: {zip_path}")
-    if source_path.suffix not in ('.ddw', '.zip'):
+    if source.suffix not in ('.ddw', '.zip'):
         raise ValueError(f"Not a theme archive: {zip_path}")
 
-    extract_dir = DEFAULT_THEMES_DIR / source_path.stem
-    if extract_dir.exists():
-        raise FileExistsError(f"Theme already exists: {extract_dir.name}")
+    # Extract to a temporary location
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = extract_theme(str(source), cleanup=False,
+                               extract_dir=Path(tmpdir))
+        extract_dir = Path(result['extract_dir'])
 
-    DEFAULT_THEMES_DIR.mkdir(parents=True, exist_ok=True)
-    try:
-        with zipfile.ZipFile(str(source_path), 'r') as zf:
-            zf.extractall(str(extract_dir))
-    except zipfile.BadZipFile:
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        raise
+        # Determine target name (strip extension)
+        target_name = source.stem
+        target_dir = DEFAULT_THEMES_DIR / target_name
 
-    # Verify theme.json exists (root *.json first, then recursive theme.json)
-    theme_json_path = None
-    for json_file in extract_dir.glob("*.json"):
-        theme_json_path = json_file
-        break
-    if not theme_json_path:
-        for found_path in extract_dir.rglob("theme.json"):
-            theme_json_path = found_path
-            break
-    if not theme_json_path:
-        shutil.rmtree(extract_dir, ignore_errors=True)
-        raise FileNotFoundError("theme.json not found in theme archive")
+        if target_dir.exists():
+            raise FileExistsError(f"Theme already exists: {target_name}")
 
-    with open(theme_json_path, 'r') as f:
-        theme_data = json.load(f)
+        # Read + validate before committing to the themes directory, so a
+        # rejected import leaves no partial theme behind (the temp dir is
+        # cleaned up by the context manager).
+        theme_json_path = extract_dir / "theme.json"
+        if not theme_json_path.exists():
+            for json_file in extract_dir.glob("*.json"):
+                theme_json_path = json_file
+                break
+            else:
+                found = list(extract_dir.rglob("theme.json"))
+                if not found:
+                    raise FileNotFoundError(
+                        "theme.json not found in extracted theme")
+                theme_json_path = found[0]
+        with open(theme_json_path, 'r') as f:
+            theme_data = json.load(f)
+        theme_data = normalize_image_lists(theme_data)
+        validate_theme_images(extract_dir, theme_data)
+
+        # Move to themes directory
+        target_dir.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(extract_dir), str(target_dir))
 
     return {
-        "extract_dir": str(extract_dir),
-        "displayName": theme_data.get("displayName", source_path.stem),
-        "imageCredits": theme_data.get("imageCredits", "Unknown Credits"),
-        "imageFilename": theme_data.get("imageFilename", "*.jpg"),
-        "sunsetImageList": theme_data.get("sunsetImageList", []),
-        "sunriseImageList": theme_data.get("sunriseImageList", []),
-        "dayImageList": theme_data.get("dayImageList", []),
-        "nightImageList": theme_data.get("nightImageList", []),
+        'extract_dir': str(target_dir),
+        'displayName': theme_data.get('displayName', target_name),
+        'imageCredits': theme_data.get('imageCredits', ''),
+        'imageFilename': theme_data.get('imageFilename', ''),
+        'sunriseImageList': theme_data.get('sunriseImageList', []),
+        'dayImageList': theme_data.get('dayImageList', []),
+        'sunsetImageList': theme_data.get('sunsetImageList', []),
+        'nightImageList': theme_data.get('nightImageList', []),
     }
 
 
