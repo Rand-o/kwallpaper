@@ -9,7 +9,12 @@ from datetime import date, datetime, timedelta
 import pytest
 from zoneinfo import ZoneInfo
 
-from kwallpaper.solarsegments import segments_for_now, solar_segments
+from kwallpaper.solarsegments import (
+    IncompleteSegmentsError,
+    category_for,
+    segments_for_now,
+    solar_segments,
+)
 
 TZ = ZoneInfo("America/Phoenix")
 LAT, LON = 33.4484, -112.074
@@ -75,3 +80,59 @@ def test_for_now_evening_uses_same_day():
 def test_for_now_naive_now_is_assumed_local():
     seg = segments_for_now(datetime(2026, 6, 21, 3, 0), TZ, LAT, LON)
     assert seg.day == date(2026, 6, 20)
+
+
+def _phoenix_seg():
+    return solar_segments(DAY, TZ, LAT, LON)
+
+
+def _at(h: int, m: int, day: int = 21) -> datetime:
+    return datetime(2026, 6, day, h, m, tzinfo=TZ)
+
+
+@pytest.mark.parametrize("pick,expected", [
+    (lambda s: s.dawn - timedelta(seconds=1), "night"),
+    (lambda s: s.dawn, "sunrise"),
+    (lambda s: s.golden_hour_end - timedelta(seconds=1), "sunrise"),
+    (lambda s: s.golden_hour_end, "day"),
+    (lambda s: s.golden_hour - timedelta(seconds=1), "day"),
+    (lambda s: s.golden_hour, "sunset"),
+    (lambda s: s.dusk - timedelta(seconds=1), "sunset"),
+    (lambda s: s.dusk, "night"),
+    (lambda s: s.next_dawn - timedelta(seconds=1), "night"),
+    (lambda s: s.next_dawn, "night"),
+])
+def test_category_boundaries(pick, expected):
+    seg = _phoenix_seg()
+    assert category_for(pick(seg), seg) == expected
+
+
+def test_category_named_times():
+    seg = _phoenix_seg()
+    pre_dawn = _at(3, 0)
+    assert category_for(pre_dawn, segments_for_now(pre_dawn, TZ, LAT, LON)) == "night"
+    assert category_for(_at(12, 0), seg) == "day"
+    assert category_for(_at(23, 0), seg) == "night"
+
+
+def test_category_24h_sweep_block_sequence():
+    """A 10-minute sweep from dawn to next dawn yields exactly
+    sunrise -> day -> sunset -> night, in order, with no repeats."""
+    seg = _phoenix_seg()
+    t = seg.dawn
+    seq = []
+    while t < seg.next_dawn:
+        seq.append(category_for(t, seg))
+        t += timedelta(minutes=10)
+    blocks = []
+    for c in seq:
+        if not blocks or blocks[-1] != c:
+            blocks.append(c)
+    assert blocks == ["sunrise", "day", "sunset", "night"]
+
+
+def test_category_incomplete_raises():
+    polar = solar_segments(DAY, ZoneInfo("Arctic/Longyearbyen"), 78.22, 15.65)
+    now = datetime(2026, 6, 21, 12, 0, tzinfo=ZoneInfo("Arctic/Longyearbyen"))
+    with pytest.raises(IncompleteSegmentsError):
+        category_for(now, polar)

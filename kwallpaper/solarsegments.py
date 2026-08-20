@@ -124,3 +124,32 @@ def segments_for_now(now: datetime, tz: ZoneInfo,
     if today.dawn is not None and now < today.dawn:
         return solar_segments(now.date() - timedelta(days=1), tz, lat, lon)
     return today
+
+
+def category_for(now: datetime, seg: Segments) -> str:
+    """Classify ``now`` as night/sunrise/day/sunset.
+
+    Each segment is inclusive at its start and exclusive at its end:
+      [dawn, golden_hour_end)         sunrise
+      [golden_hour_end, golden_hour)  day
+      [golden_hour, dusk)             sunset
+      [dusk, next_dawn)               night
+    Times outside [dawn, next_dawn) are night as well.
+
+    Raises:
+        IncompleteSegmentsError: when ``seg.complete`` is False.
+    """
+    if not seg.complete:
+        raise IncompleteSegmentsError(
+            f"sun segments incomplete for {seg.day}; fall back to legacy model")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=seg.dawn.tzinfo)
+    if now < seg.dawn or now >= seg.next_dawn:
+        return "night"
+    if now < seg.golden_hour_end:
+        return "sunrise"
+    if now < seg.golden_hour:
+        return "day"
+    if now < seg.dusk:
+        return "sunset"
+    return "night"
