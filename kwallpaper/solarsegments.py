@@ -20,7 +20,7 @@ back to the legacy model.
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
@@ -242,3 +242,116 @@ def segments_for_config(config_path: str,
     if now is None:
         now = datetime.now(tz)
     return segments_for_now(now, tz, lat, lon)
+
+
+def _image_window(seg: Segments, theme_data: Dict[str, Any],
+                  image_value: int) -> Optional[Tuple[datetime, datetime]]:
+    """Display window (start, end) of ``image_value``, or None when the
+    value is not in any of the day's segment lists (after the dedup
+    rule)."""
+    for category, (start, end) in _effective_windows(seg, theme_data).items():
+        image_list = theme_data.get(f"{category}ImageList", []) or []
+        if image_value not in image_list:
+            continue
+        n = len(image_list)
+        duration = (end - start).total_seconds() / n
+        i = image_list.index(image_value)
+        return (start + timedelta(seconds=i * duration),
+                start + timedelta(seconds=(i + 1) * duration))
+    return None
+
+
+def _all_boundaries(seg: Segments, theme_data: Dict[str, Any]) -> List[datetime]:
+    """Every image-change instant of the day: each effective window's
+    start, its internal image boundaries, and its end.  Sorted
+    ascending."""
+    bounds: List[datetime] = []
+    for category, (start, end) in _effective_windows(seg, theme_data).items():
+        image_list = theme_data.get(f"{category}ImageList", []) or []
+        if not image_list:
+            continue
+        n = len(image_list)
+        duration = (end - start).total_seconds() / n
+        for i in range(n + 1):
+            bounds.append(start + timedelta(seconds=i * duration))
+    return sorted(bounds)
+
+
+def next_change_time(now: datetime, seg: Segments,
+                     theme_data: Dict[str, Any],
+                     current_image: Optional[int] = None,
+                     next_segments_provider: Optional[Callable[[date], Segments]] = None
+                     ) -> datetime:
+    """The next wallpaper-change instant strictly after ``now``.
+
+    The change instants are the image boundaries of the day's effective
+    windows (dedup rule applied): within a segment that is the next
+    image boundary; in the segment's last image that is the segment end;
+    in the night segment's last image that is the next day's dawn
+    (``seg.next_dawn`` — the night wrap needs no extra computation, the
+    next day's dawn is already a field of this Segments object).
+
+    Args:
+        now: the reference instant (aware, or naive in the segment's tz).
+        seg: the segments of the day that owns ``now`` (see
+            ``segments_for_now``).  Must be complete.
+        theme_data: the theme.json dict (four image lists).
+        current_image: value of the image currently displayed (one of
+            the theme.json list values), or None.  When given and its
+            display window still lies ahead of ``now``, that window's
+            end is returned — this keeps re-arming correct when ``now``
+            has drifted slightly (delayed run, clock skew) but the
+            current image is still up.  When the window has already
+            ended (a missed run), the first future boundary is returned
+            instead.
+        next_segments_provider: called with a date to obtain that day's
+            Segments.  Only needed when ``now`` is at/after
+            ``seg.next_dawn`` (a delayed run past the night end): the
+            function walks forward day by day until it finds a future
+            boundary.  Pass a closure over ``solar_segments`` in
+            production; tests pass fakes.
+
+    Returns:
+        The next change instant (timezone-aware).
+
+    Raises:
+        IncompleteSegmentsError: ``seg`` (or a walked-forward day) is
+            incomplete, or no future boundary can be found.
+        ValueError: ``current_image`` is not in any segment list.
+    """
+    if not seg.complete:
+        raise IncompleteSegmentsError(
+            f"sun segments incomplete for {seg.day}; cannot compute next change")
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=seg.dawn.tzinfo)
+
+    if current_image is not None:
+        window = _image_window(seg, theme_data, current_image)
+        if window is None:
+            raise ValueError(
+                f"image {current_image} is not in any segment list of {seg.day}")
+        if window[1] > now:
+            return window[1]
+        # The current image's window has already ended (missed run or
+        # clock jump): fall through to the next future boundary.
+
+    future = [b for b in _all_boundaries(seg, theme_data) if b > now]
+    if future:
+        return min(future)
+
+    # ``now`` is at/after this day's night end (a delayed run past
+    # next_dawn): walk forward day by day via the injected provider.
+    day = seg.day
+    for _ in range(8):  # bounded: never walk more than a week
+        day = day + timedelta(days=1)
+        if next_segments_provider is None:
+            raise IncompleteSegmentsError(
+                f"next day's segments unavailable for {day} "
+                "(pass next_segments_provider)")
+        nseg = next_segments_provider(day)
+        if not nseg.complete:
+            raise IncompleteSegmentsError(f"sun segments incomplete for {day}")
+        future = [b for b in _all_boundaries(nseg, theme_data) if b > now]
+        if future:
+            return min(future)
+    raise IncompleteSegmentsError(f"no future boundary found after {now}")
