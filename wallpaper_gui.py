@@ -1171,6 +1171,15 @@ class SettingsPage(QWidget):
         sf.addRow(self.daily_shuffle)
         self.auto_start_scheduler = QCheckBox("Start scheduler on app launch")
         sf.addRow(self.auto_start_scheduler)
+        self.time_model = QComboBox()
+        self.time_model.addItems(["Legacy (fixed offsets)",
+                                  "Sun-position (WDD)"])
+        self.time_model.setToolTip(
+            "Time model for wallpaper selection: legacy uses fixed "
+            "offsets from sunrise/sunset; sun-position uses the WDD "
+            "sun-position segments (dawn → +6° → +6° → dusk). "
+            "Applies on Save.")
+        sf.addRow("Time model:", self.time_model)
 
         # ── Location ──
         lg = QGroupBox("Location")
@@ -1240,6 +1249,11 @@ class SettingsPage(QWidget):
                 s.get("daily_shuffle_enabled", True))
             self.auto_start_scheduler.setChecked(
                 app_cfg.get("start_scheduler_on_launch", True))
+            model = s.get("suntime_model", "legacy")
+            self.time_model.blockSignals(True)
+            self.time_model.setCurrentIndex(
+                {"legacy": 0, "sun": 1}.get(model, 0))
+            self.time_model.blockSignals(False)
             self.timezone.setText(loc.get("timezone", "America/Phoenix"))
             self.lat.setValue(loc.get("latitude",  33.4484))
             self.lon.setValue(loc.get("longitude", -112.074))
@@ -1256,11 +1270,15 @@ class SettingsPage(QWidget):
     def _save(self):
         try:
             c = load_config(self._cfg)
-            c["scheduling"] = {
-                "cycle_interval":        self.interval.value(),
-                "run_cycle":             self.run_cycle.isChecked(),
-                "daily_shuffle_enabled": self.daily_shuffle.isChecked(),
-            }
+            # Read-modify-write the scheduling section (NOT replace):
+            # safety_interval and future keys must survive a GUI save.
+            s = c.get("scheduling", {})
+            s["cycle_interval"] = self.interval.value()
+            s["run_cycle"] = self.run_cycle.isChecked()
+            s["daily_shuffle_enabled"] = self.daily_shuffle.isChecked()
+            s["suntime_model"] = {0: "legacy", 1: "sun"}.get(
+                self.time_model.currentIndex(), "legacy")
+            c["scheduling"] = s
             c["location"] = {
                 "timezone":  self.timezone.text(),
                 "latitude":  self.lat.value(),
@@ -1276,11 +1294,15 @@ class SettingsPage(QWidget):
             }
             save_config(self._cfg, c)
 
-            # If the scheduler is running, apply the new cycle interval
-            # immediately instead of waiting for a restart.
+            # If the scheduler is running, apply the new settings
+            # immediately (cycle interval and/or time model) instead of
+            # waiting for a restart.
             w = self.window()
             if hasattr(w, "sched") and w.sched.is_running():
                 w.sched.scheduler.reload_cycle_interval()
+            # The time model affects the Themes-tab schedule preview.
+            if hasattr(w, "themes") and hasattr(w.themes, "refresh_schedule_preview"):
+                w.themes.refresh_schedule_preview()
 
             autostart_dir = Path.home() / ".config" / "autostart"
             autostart_file = autostart_dir / "top.spelunk.kwallpaper.desktop"
