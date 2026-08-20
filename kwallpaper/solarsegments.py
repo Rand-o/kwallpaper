@@ -106,3 +106,21 @@ def solar_segments(day: date, tz: ZoneInfo, lat: float,
         next_dawn=_astral_boundary(_sun.dawn, observer,
                                    day + timedelta(days=1), tz),
     )
+
+
+def segments_for_now(now: datetime, tz: ZoneInfo,
+                     lat: float, lon: float) -> Segments:
+    """Segments for the day that owns ``now``.
+
+    The night segment runs from dusk to the *next* day's dawn, so times
+    before dawn belong to the previous day's segments.  Naive ``now``
+    values are assumed to be in ``tz``.
+    """
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=tz)
+    else:
+        now = now.astimezone(tz)
+    today = solar_segments(now.date(), tz, lat, lon)
+    if today.dawn is not None and now < today.dawn:
+        return solar_segments(now.date() - timedelta(days=1), tz, lat, lon)
+    return today

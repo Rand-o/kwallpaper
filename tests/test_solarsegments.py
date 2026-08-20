@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 import pytest
 from zoneinfo import ZoneInfo
 
-from kwallpaper.solarsegments import solar_segments
+from kwallpaper.solarsegments import segments_for_now, solar_segments
 
 TZ = ZoneInfo("America/Phoenix")
 LAT, LON = 33.4484, -112.074
@@ -52,3 +52,26 @@ def test_high_latitude_partial_boundaries():
     assert seg.golden_hour_end is not None
     assert seg.golden_hour is not None
     assert seg.complete is False
+
+
+def test_for_now_early_morning_uses_previous_day():
+    """03:00 is still inside the previous day's night segment."""
+    now = datetime(2026, 6, 21, 3, 0, tzinfo=TZ)
+    seg = segments_for_now(now, TZ, LAT, LON)
+    assert seg.day == date(2026, 6, 20)
+    assert seg.dawn <= now < seg.next_dawn
+
+
+def test_for_now_midday_uses_same_day():
+    now = datetime(2026, 6, 21, 8, 0, tzinfo=TZ)
+    assert segments_for_now(now, TZ, LAT, LON).day == DAY
+
+
+def test_for_now_evening_uses_same_day():
+    now = datetime(2026, 6, 21, 21, 0, tzinfo=TZ)
+    assert segments_for_now(now, TZ, LAT, LON).day == DAY
+
+
+def test_for_now_naive_now_is_assumed_local():
+    seg = segments_for_now(datetime(2026, 6, 21, 3, 0), TZ, LAT, LON)
+    assert seg.day == date(2026, 6, 20)
