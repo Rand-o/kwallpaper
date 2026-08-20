@@ -1,0 +1,38 @@
+# Changelog
+
+All notable changes to kWallpaper are documented in this file.
+
+## [Unreleased] — WDD sun-position time model (Phases 2–4)
+
+### Added
+- **Sun-position time model** (`scheduling.suntime_model: "sun"`) — WDD-style
+  segment boundaries (dawn → +6° → −6° → dusk) drive both the scheduler and
+  image selection. Now the **default** for new configs; existing configs
+  without the field pick it up automatically at load time.
+- **Event-driven scheduling** in sun mode: a one-shot `DateTrigger` fires
+  exactly at the next segment boundary (re-armed after every cycle), with a
+  configurable safety-net interval (default 300 s) as a fallback.
+- **`next_change_time()`** in `solarsegments` and
+  `core.next_change_time_for_config()` — the next moment the selected image
+  changes, for any config.
+- **Skip-if-unchanged wallpaper apply**: the scheduler no longer calls
+  `org.kde.plasmawallpaper` when the selected image is unchanged (last
+  applied image is persisted in `theme.last_applied_image`).
+- **GUI**: Settings → Time model selector (legacy / sun-position) with hot
+  reload of a running scheduler, and a 24-hour schedule preview widget in
+  the Themes tab (image windows, thumbnails, current-time marker).
+- **Strict theme import validation**: imports whose `theme.json` references
+  missing image files are rejected with an error listing every missing
+  image; rejected imports leave no partial theme behind.
+- `themes.image_files_for()` — single source of truth for image discovery,
+  shared by selection and import validation.
+
+### Changed
+- Default `scheduling.suntime_model` flipped from `"legacy"` to `"sun"`.
+  Explicit `"legacy"` values in existing configs are preserved.
+- Theme import (GUI and CLI) now validates referenced images before
+  committing to the themes directory.
+
+### Notes
+- The legacy fixed-offset model remains fully supported; select it in
+  Settings → Time model.

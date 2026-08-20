@@ -152,7 +152,7 @@ Default: `~/.var/app/top.spelunk.kwallpaper/config/kwallpaper/config.json`
 | scheduling.interval | integer | Scheduler cycle interval in seconds (default: 60) |
 | scheduling.run_cycle | boolean | Enable interval cycle task (default: true) |
 | scheduling.daily_shuffle_enabled | boolean | Enable daily theme shuffle at midnight (default: true) |
-| scheduling.suntime_model | string | Time model: `"legacy"` (fixed offsets from sunrise/sunset) or `"sun"` (WDD sun-position segments: dawn → +6° → −6° → dusk). Selectable in the GUI (Settings → Time model). Default `"legacy"` until Phase 4 |
+| scheduling.suntime_model | string | Time model: `"sun"` (WDD sun-position segments: dawn → +6° → −6° → dusk; the default) or `"legacy"` (fixed offsets from sunrise/sunset). Selectable in the GUI (Settings → Time model) |
 | scheduling.auto_start_on_launch | boolean | Start the scheduler when the GUI launches (default: false) |
 | location.city | string | City name (display only) |
 | location.timezone | string | IANA timezone string (e.g., `America/Phoenix`) |
@@ -202,7 +202,7 @@ Images are numbered 1–16 in the theme. Normalization ensures:
 ## GUI Interface
 
 ### Themes Tab
-- **Import** — Import `.ddw` or `.zip` theme files (background worker)
+- **Import** — Import `.ddw` or `.zip` theme files (background worker). Imports are validated: if `theme.json` references image numbers that do not exist in the archive, the import is rejected with an error listing every missing image, and no partial theme is left behind
 - **Theme list** — Browse available themes with image counts
 - **Preview** — Live cross-fade preview from adaptive-resolution thumbnails (1080p–4K, background decode)
 - **Apply** — Apply selected theme immediately (background worker)
@@ -283,6 +283,13 @@ Verify the `.ddw` file is valid:
 ```bash
 unzip -l theme.ddw | grep "\.json"
 ```
+
+Error: "references image file(s) that do not exist"
+
+The theme's `theme.json` lists image numbers that have no matching file in the
+archive (e.g. `nightImageList` goes up to 16 but only 12 images are present).
+The error lists every missing image. Add the missing files, or lower the image
+numbers in `theme.json`, then import again.
 
 ### Scheduler Won't Start
 1. Check APScheduler is installed: `pip install apscheduler`
