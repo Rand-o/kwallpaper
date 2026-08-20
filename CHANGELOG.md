@@ -2,7 +2,7 @@
 
 All notable changes to kWallpaper are documented in this file.
 
-## [Unreleased] — WDD sun-position time model (Phases 2–4)
+## [1.0.4] — WDD sun-position time model (Phases 2–4)
 
 ### Added
 - **Sun-position time model** (`scheduling.suntime_model: "sun"`) — WDD-style
