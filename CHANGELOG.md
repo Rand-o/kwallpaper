@@ -11,7 +11,7 @@ All notable changes to kWallpaper are documented in this file.
   without the field pick it up automatically at load time.
 - **Event-driven scheduling** in sun mode: a one-shot `DateTrigger` fires
   exactly at the next segment boundary (re-armed after every cycle), with a
-  configurable safety-net interval (default 300 s) as a fallback.
+  configurable safety-net interval (default 60 s) as a fallback.
 - **`next_change_time()`** in `solarsegments` and
   `core.next_change_time_for_config()` — the next moment the selected image
   changes, for any config.
@@ -32,6 +32,23 @@ All notable changes to kWallpaper are documented in this file.
   Explicit `"legacy"` values in existing configs are preserved.
 - Theme import (GUI and CLI) now validates referenced images before
   committing to the themes directory.
+
+### Performance
+- **Preview memory cut from ~925MB to ~200MB**: shared disk thumbnail
+  cache no longer reuses much-larger cached thumbnails (2× reuse rule),
+  schedule-preview thumbnails are downscaled to display size, and the
+  crossfade preview uses a 48MB decoded-pixmap budget with a bounded
+  widget-pixmap cache, no oversampling headroom, and cache release while
+  the Themes tab is hidden.
+- **Seamless slideshow under the small budget**: the eager path
+  re-requests images whose decoded pixmap was LRU-evicted, one step
+  before display, so the preview never flashes "Loading preview…"
+  between images.
+- **Resize recovery**: if a raw pixmap is evicted while the preview is
+  shown, the current image re-loads in under a second instead of staying
+  stuck on "Loading preview…".
+- Schedule-preview thumbnails use a cover crop so they fill their
+  squares instead of letterboxing.
 
 ### Notes
 - The legacy fixed-offset model remains fully supported; select it in
