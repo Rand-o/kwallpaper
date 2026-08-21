@@ -11,7 +11,8 @@ All notable changes to kWallpaper are documented in this file.
   without the field pick it up automatically at load time.
 - **Event-driven scheduling** in sun mode: a one-shot `DateTrigger` fires
   exactly at the next segment boundary (re-armed after every cycle), with a
-  configurable safety-net interval (default 60 s) as a fallback.
+  configurable safety-net interval (default 600 s; the GUI applies changes
+  live without a restart) as a fallback.
 - **`next_change_time()`** in `solarsegments` and
   `core.next_change_time_for_config()` — the next moment the selected image
   changes, for any config.
