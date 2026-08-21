@@ -330,16 +330,22 @@ class _BarArea(QWidget):
             if r.width() > THUMB_PX + 12:
                 pm = self._owner._pixmaps.get(e.path)
                 if pm is not None:
+                    # "Cover" fill: scale to expand over the square and
+                    # center-crop with the rounded clip — the image fills
+                    # the whole square without distortion (only the edges
+                    # of wide/tall pictures are trimmed).
                     scaled = pm.scaled(
                         THUMB_PX, THUMB_PX,
-                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
                         Qt.TransformationMode.SmoothTransformation)
                     tp = QPainterPath()
                     tp.addRoundedRect(QRectF(tx, ty, THUMB_PX, THUMB_PX),
                                       3, 3)
                     p.save()
                     p.setClipPath(tp)
-                    p.drawPixmap(tx, ty, scaled)
+                    ox = tx + (THUMB_PX - scaled.width()) // 2
+                    oy = ty + (THUMB_PX - scaled.height()) // 2
+                    p.drawPixmap(ox, oy, scaled)
                     p.restore()
                     p.setPen(QPen(QColor(0, 0, 0, 64), 1))
                     p.drawPath(tp)

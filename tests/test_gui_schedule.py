@@ -293,6 +293,47 @@ class TestSchedulePreviewWidget:
         w._reset_footer()
         assert "Now:" in w._foot.text()
 
+    def test_thumbnail_fills_square(self, window, qapp):
+        """The segment thumbnail must fill its 28px square (cover crop),
+        not sit as a letterboxed strip in the top-left corner."""
+        from kwallpaper.image_schedule import ScheduleEntry, ThemeSchedule
+        from kwallpaper.schedule_preview import (RULER_H, RULER_GAP,
+                                                 STRIP_H, THUMB_PX)
+        from PyQt6.QtGui import QPixmap
+        w = window.themes.schedule_preview
+        path = "img_01.jpg"
+        entries = (ScheduleEntry(start=dt(0, 0), end=dt(23, 59), image=1,
+                                 path=path),)
+        w._on_schedule_ready(
+            ThemeSchedule(date=D, tz=TZ, model="sun", now=dt(12, 0),
+                          segments=_seg(D), entries=entries),
+            w._token.version)
+        # 16:9 red image, like the real 5120x2880 theme pictures
+        pm = QPixmap(160, 90)
+        pm.fill(Qt.GlobalColor.red)
+        w._pixmaps[path] = pm
+        qapp.processEvents()
+        w.show()
+        w.resize(800, w.height())
+        qapp.processEvents()
+
+        bar = w._bar.grab()
+        img = bar.toImage()
+        # Thumbnail square geometry (all-day entry starts at x=0)
+        strip_y = RULER_H + RULER_GAP
+        tx = 0 + 1 + 5
+        ty = strip_y + (STRIP_H - THUMB_PX) // 2
+        # Bottom interior point (inside the 3px rounded corner): empty
+        # background when the image is letterboxed, red when it fills.
+        b = img.pixelColor(tx + 14, ty + THUMB_PX - 2)
+        assert b.red() > 200 and b.green() < 60 and b.blue() < 60, \
+            f"thumbnail does not fill the square bottom: {b.name()}"
+        # Top interior point: red in both modes (guards against the
+        # image being shifted instead of cropped).
+        t = img.pixelColor(tx + 14, ty + 2)
+        assert t.red() > 200 and t.green() < 60 and t.blue() < 60, \
+            f"thumbnail missing from the square top: {t.name()}"
+
     def test_marker_x_position(self, window, qapp):
         from kwallpaper.image_schedule import ScheduleEntry, ThemeSchedule
         w = window.themes.schedule_preview
