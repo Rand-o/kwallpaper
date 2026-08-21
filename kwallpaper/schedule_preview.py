@@ -536,10 +536,20 @@ class SchedulePreviewWidget(QWidget):
     def _on_thumbs_ready(self, thumbs: dict, v: int):
         if v != self._token.version:
             return  # superseded
+        # Scale down before caching: the shared thumbnail cache may hold
+        # multi-megapixel entries (the crossfade preview writes up to 4K),
+        # but this widget only draws THUMB_PX squares.  Caching the full
+        # decode would pin ~20MB per image for a 28px display.
+        cache_px = THUMB_PX * 4  # 4x headroom for HiDPI + smooth downscale
         for src, thumb in thumbs.items():
             pm = QPixmap(thumb)
-            if not pm.isNull():
-                self._pixmaps[src] = pm
+            if pm.isNull():
+                continue
+            if max(pm.width(), pm.height()) > cache_px:
+                pm = pm.scaled(cache_px, cache_px,
+                               Qt.AspectRatioMode.KeepAspectRatio,
+                               Qt.TransformationMode.SmoothTransformation)
+            self._pixmaps[src] = pm
         self._bar.update()
 
     def _entry_text(self, e) -> str:

@@ -395,11 +395,11 @@ class ImageCrossFadeWidget(QWidget):
     so memory use stays flat regardless of preview resolution.
     """
 
-    _MAX_CACHE_BYTES = 256 * 1024 * 1024  # 256 MB decoded-pixmap budget
+    _MAX_CACHE_BYTES = 96 * 1024 * 1024   # 96 MB decoded-pixmap budget
     _EAGER_AHEAD = 2                      # images loaded ahead of current
-    _THUMB_OVERSAMPLE = 2                 # thumb long-edge = 2x PHYSICAL widget long-edge
+    _THUMB_OVERSAMPLE = 1.25              # thumb long-edge = 1.25x PHYSICAL widget long-edge
     _THUMB_MIN = 1080                     # floor before first layout (widget is 0x0)
-    _THUMB_MAX = 3840                     # cap: never exceed 4K
+    _THUMB_MAX = 2160                     # cap: never exceed 1440p
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -497,13 +497,15 @@ class ImageCrossFadeWidget(QWidget):
 
     # -- background loading ----------------------------------------------------
     def _desired_thumb_size(self) -> int:
-        """Adaptive thumbnail long-edge: max(1080, 2x the widget's PHYSICAL
-        long-edge), capped at 4K.  The widget size is in logical pixels, so
-        it is scaled by devicePixelRatio first: on a 2x HiDPI display a
-        700px-logical widget paints into 1400 physical pixels and needs a
-        thumb of at least that size to be sharp.  The 2x oversample on top
-        of physical size leaves headroom for the smooth downscale.  Before
-        the first layout the widget is 0x0 and the 1080p floor applies."""
+        """Adaptive thumbnail long-edge: max(1080, 1.25x the widget's
+        PHYSICAL long-edge), capped at 1440p.  The widget size is in
+        logical pixels, so it is scaled by devicePixelRatio first: on a 2x
+        HiDPI display a 700px-logical widget paints into 1400 physical
+        pixels and needs a thumb of at least that size to be sharp.  The
+        1.25x oversample on top of physical size leaves headroom for the
+        smooth downscale without pinning multi-megapixel decodes in the
+        raw-pixmap cache.  Before the first layout the widget is 0x0 and
+        the 1080p floor applies."""
         dpr = self.devicePixelRatioF()
         if dpr <= 0:
             dpr = 1.0

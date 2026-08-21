@@ -439,10 +439,17 @@ def ensure_thumbnail(image_path: str, thumb_size: int = 1080,
             # through to a re-encode.  (QImageReader has no isNull() in
             # PyQt6 — calling it raised AttributeError, which the outer
             # except swallowed, making every cache lookup fail.)
+            # Reuse only while the cached size is within 2x of the request:
+            # the cache is shared across consumers (the schedule preview
+            # asks for ~96px, the crossfade preview for up to 4K), and a
+            # 96px request reusing a 3076px file would decode ~21MB of
+            # pixels to draw a 28px square.  Much-larger cache entries are
+            # re-encoded at the requested size instead.
             reader = QImageReader(str(thumb_path))
             sz = reader.size()
+            long_edge = max(sz.width(), sz.height())
             if (sz.width() > 0 and sz.height() > 0
-                    and max(sz.width(), sz.height()) >= thumb_size):
+                    and thumb_size <= long_edge <= 2 * thumb_size):
                 return str(thumb_path)
 
         reader = QImageReader(str(src))
