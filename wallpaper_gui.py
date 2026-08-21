@@ -395,14 +395,16 @@ class ImageCrossFadeWidget(QWidget):
     so memory use stays flat regardless of preview resolution.
     """
 
-    # 128 MB decoded-pixmap budget: holds every thumb of a typical
-    # 16-image theme at common window sizes (16 x ~6.4MB = 102MB for a
-    # ~1350px-wide preview) so the slideshow never has to re-decode an
-    # evicted image; larger windows or bigger themes evict oldest first.
-    _MAX_CACHE_BYTES = 128 * 1024 * 1024
+    # 48 MB decoded-pixmap budget: holds ~7 of the 1687px preview thumbs
+    # (6.4MB each) of a 16-image theme.  Eviction is safe: the slideshow
+    # requests each image 2.7s before display and a thumb decode takes
+    # ~100ms, and _scaled_for() re-requests evicted images on demand, so
+    # the preview never stays blank.  Smaller than "hold everything"
+    # (128MB) to keep RSS low.
+    _MAX_CACHE_BYTES = 48 * 1024 * 1024
     _EAGER_AHEAD = 2                      # images loaded ahead of current
-    _THUMB_OVERSAMPLE = 1.25              # thumb long-edge = 1.25x PHYSICAL widget long-edge
-    _THUMB_MIN = 1080                     # floor before first layout (widget is 0x0)
+    _THUMB_OVERSAMPLE = 1.0               # thumb long-edge = 1.0x PHYSICAL widget long-edge
+    _THUMB_MIN = 960                      # floor before first layout (widget is 0x0)
     _THUMB_MAX = 2160                     # cap: never exceed 1440p
 
     def __init__(self, parent=None):
@@ -417,6 +419,7 @@ class ImageCrossFadeWidget(QWidget):
         self._scaled: dict[int, QPixmap] = {}    # image idx -> scaled pixmap
         self._loading: set[str] = set()          # thumb paths in flight
         self._token = _LoadToken()               # bump to cancel in-flight
+        self._running = False                    # slideshow timer requested
         # Guards all state above.  Every access happens on the GUI thread
         # (Qt guarantees single-threaded widget access), but the lock makes
         # the invariants explicit and protects the state from being mutated
@@ -491,25 +494,56 @@ class ImageCrossFadeWidget(QWidget):
 
     def start(self):
         with self._state_lock:
+            self._running = True
             multi = len(self._images) > 1
         if multi:
             self._timer.start()
 
     def stop(self):
+        with self._state_lock:
+            self._running = False
         self._timer.stop()
         self._anim.stop()
 
+    def hideEvent(self, event):
+        # The decoded-pixmap caches are the widget's biggest memory use.
+        # Free them while the preview is not visible: the disk thumbnail
+        # cache makes the rebuild on show take well under a second, and
+        # the timer is paused so nothing re-populates them in the
+        # background.
+        self._anim.stop()
+        self._timer.stop()
+        with self._state_lock:
+            self._token.version += 1  # cancel in-flight loads
+            self._raw_cache.clear()
+            self._raw_bytes = 0
+            self._scaled.clear()
+            self._thumb_paths.clear()
+            self._loading.clear()
+            self._blend = 0.0
+        super().hideEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        with self._state_lock:
+            running = self._running
+            has_images = bool(self._images)
+        if has_images:
+            self._request_eager()
+        if running:
+            self._timer.start()
+
     # -- background loading ----------------------------------------------------
     def _desired_thumb_size(self) -> int:
-        """Adaptive thumbnail long-edge: max(1080, 1.25x the widget's
+        """Adaptive thumbnail long-edge: max(960, 1.0x the widget's
         PHYSICAL long-edge), capped at 1440p.  The widget size is in
         logical pixels, so it is scaled by devicePixelRatio first: on a 2x
         HiDPI display a 700px-logical widget paints into 1400 physical
-        pixels and needs a thumb of at least that size to be sharp.  The
-        1.25x oversample on top of physical size leaves headroom for the
-        smooth downscale without pinning multi-megapixel decodes in the
-        raw-pixmap cache.  Before the first layout the widget is 0x0 and
-        the 1080p floor applies."""
+        pixels and needs a thumb of at least that size to be sharp.  No
+        oversampling headroom: the decoded pixmaps are the preview's
+        biggest memory use, and 1:1 thumbs downscale smoothly enough.
+        Before the first layout the widget is 0x0 and the 960 floor
+        applies."""
         dpr = self.devicePixelRatioF()
         if dpr <= 0:
             dpr = 1.0
@@ -563,8 +597,10 @@ class ImageCrossFadeWidget(QWidget):
             # _scaled while iterating _thumb_paths is safe only because we
             # never mutate _thumb_paths here, but snapshotting the index
             # list keeps the logic obviously correct.
+            keep = self._scaled_keep()
             targets = [idx for idx, t in self._thumb_paths.items()
-                       if t == thumb and idx not in self._scaled]
+                       if t == thumb and idx in keep
+                       and idx not in self._scaled]
         if img.isNull():
             return
         # Convert to QPixmap on the GUI thread: the QPixmap must only ever
@@ -586,8 +622,9 @@ class ImageCrossFadeWidget(QWidget):
                 oldest = next(iter(self._raw_cache))
                 self._raw_bytes -= self._pixmap_bytes(self._raw_cache[oldest])
                 self._raw_cache.pop(oldest)
+            keep = self._scaled_keep()
             for idx in targets:
-                if idx not in self._scaled:
+                if idx in keep and idx not in self._scaled:
                     self._scaled[idx] = self._scale_to_widget(pm)
         self.update()
 
@@ -620,6 +657,23 @@ class ImageCrossFadeWidget(QWidget):
         return out
 
     # -- internals -------------------------------------------------------------
+    def _scaled_keep(self) -> set:
+        """Indices whose widget-sized pixmap must stay in _scaled: the
+        currently shown image and the fade target.  Everything else is
+        re-scaled on demand from the raw cache (_scaled_for), which keeps
+        _scaled to two widget-sized pixmaps instead of one per image."""
+        n = len(self._images)
+        if n == 0:
+            return set()
+        return {self._idx, (self._idx + 1) % n}
+
+    def _prune_scaled(self):
+        """Drop widget-sized pixmaps no longer in the keep set.  Must be
+        called with _state_lock held."""
+        keep = self._scaled_keep()
+        for idx in [i for i in self._scaled if i not in keep]:
+            del self._scaled[idx]
+
     def _scaled_for(self, idx: int):
         """Return the scaled pixmap for idx, scaling the cached raw pixmap on
         demand if its thumb was never registered (lazy-load race).
@@ -668,6 +722,7 @@ class ImageCrossFadeWidget(QWidget):
             with self._state_lock:
                 self._idx = nxt
                 self._blend = 0.0
+                self._prune_scaled()
             self.update()
 
     def _on_fade_done(self):
@@ -677,6 +732,7 @@ class ImageCrossFadeWidget(QWidget):
                 return
             self._idx = (self._idx + 1) % n
             self._blend = 0.0
+            self._prune_scaled()
         self.update()
 
     def resizeEvent(self, event):
@@ -684,9 +740,10 @@ class ImageCrossFadeWidget(QWidget):
         # Snapshot under the lock; do the (relatively expensive) scaling
         # outside the lock so a slow scale can't stall signal delivery.
         with self._state_lock:
+            keep = self._scaled_keep()
             pairs = [(idx, self._raw_cache[t])
                      for idx, t in self._thumb_paths.items()
-                     if t in self._raw_cache]
+                     if idx in keep and t in self._raw_cache]
             self._scaled = {}
         for idx, pm in pairs:
             self._scaled[idx] = self._scale_to_widget(pm)

@@ -75,13 +75,14 @@ def preview(qapp, tmp_path, monkeypatch):
     for idx in range(3, 16):     # request the rest in parallel
         w._request(idx)
 
+    # _scaled is bounded to the keep set (current + fade target) by
+    # design; the raw cache is what we warm up here.
     ok = _wait_until(
         qapp,
-        lambda: len(w._scaled) >= 16 and len(w._raw_cache) >= 16,
+        lambda: len(w._raw_cache) >= 16,
         timeout=60,
     )
-    assert ok, (f"warm-up incomplete: scaled={len(w._scaled)} "
-                f"raw={len(w._raw_cache)}")
+    assert ok, f"warm-up incomplete: raw={len(w._raw_cache)}"
     return w
 
 
