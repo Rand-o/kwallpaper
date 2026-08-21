@@ -316,34 +316,34 @@ class SchedulerManager:
             return False
 
     def reload_cycle_interval(self) -> bool:
-        """Re-read ``scheduling.cycle_interval`` from config and reschedule the
-        cycle task, so interval changes made in the GUI Settings tab take
+        """Re-read ``scheduling.cycle_interval`` / ``safety_interval`` from
+        config and reschedule the cycle task, so interval changes take
         effect without a full scheduler restart."""
         if not self._is_running or self.scheduler is None:
             return False
         try:
             config = self._get_config()
             if config.get('suntime_model') == 'sun':
-                # Sun mode: re-arm the one-shot from the (possibly
-                # changed) config, and make sure the safety-net job
-                # exists (a live legacy→sun switch would otherwise run
-                # without it).
-                if 'safety' not in self._tasks:
-                    safety = config.get('safety_interval', 600)
-                    try:
-                        self.scheduler.add_job(
-                            self._run_cycle_task,
-                            trigger=IntervalTrigger(seconds=safety),
-                            id='safety_task',
-                            name='Cycle Safety Net Task',
-                            replace_existing=True,
-                        )
-                        self._tasks['safety'] = {'interval': safety,
-                                                 'type': 'interval'}
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to add safety job on model switch: "
-                            f"{e}")
+                # Sun mode: re-add the safety-net job with the current
+                # config's interval (replace_existing) — a live
+                # safety_interval change takes effect without a restart,
+                # and a live legacy→sun switch gets the job at all —
+                # then re-arm the one-shot from the (possibly changed)
+                # config.
+                safety = config.get('safety_interval', 600)
+                try:
+                    self.scheduler.add_job(
+                        self._run_cycle_task,
+                        trigger=IntervalTrigger(seconds=safety),
+                        id='safety_task',
+                        name='Cycle Safety Net Task',
+                        replace_existing=True,
+                    )
+                    self._tasks['safety'] = {'interval': safety,
+                                             'type': 'interval'}
+                except Exception as e:
+                    logger.error(
+                        f"Failed to (re)add safety job: {e}")
                 # An interval fallback armed during incomplete segments
                 # picks up the new cycle_interval on the next re-arm.
                 self._rearm_next_change()

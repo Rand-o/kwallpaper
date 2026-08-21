@@ -447,6 +447,29 @@ class TestModelSwitchReload:
         assert 'cycle' in mgr._tasks  # re-armed one-shot
         assert it.call_args.kwargs.get("seconds") == 600  # safety interval
 
+    def test_sun_reload_updates_existing_safety_interval(self, cfg_sun):
+        """A safety_interval change in the config must update the interval
+        of the already-running safety job — not only add it when missing —
+        so a live config edit takes effect without a restart."""
+        mgr = _make_manager(cfg_sun, running=True)
+        mgr.scheduler = MagicMock()
+        # Simulate a running sun-mode scheduler with the default 600 s job.
+        mgr._tasks = {'cycle': {'next_change': FIXED_NEXT.isoformat(),
+                                'type': 'date'},
+                      'safety': {'interval': 600, 'type': 'interval'}}
+        # Shorten the safety interval in the config.
+        cfg = json.loads(Path(cfg_sun).read_text())
+        cfg["scheduling"]["safety_interval"] = 60
+        Path(cfg_sun).write_text(json.dumps(cfg))
+        with patch.object(scheduler_module, "IntervalTrigger") as it, \
+             patch.object(scheduler_module, "DateTrigger"), \
+             patch.object(scheduler_module, "next_change_time_for_config",
+                          return_value=FIXED_NEXT):
+            assert mgr.reload_cycle_interval() is True
+        assert mgr._tasks['safety']['interval'] == 60
+        # The safety job was re-added with the new interval.
+        assert it.call_args.kwargs.get("seconds") == 60
+
     def test_sun_to_legacy_removes_safety_task(self, cfg_sun):
         mgr = _make_manager(cfg_sun, running=True)
         mgr.scheduler = MagicMock()
