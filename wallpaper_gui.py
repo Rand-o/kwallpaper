@@ -395,7 +395,11 @@ class ImageCrossFadeWidget(QWidget):
     so memory use stays flat regardless of preview resolution.
     """
 
-    _MAX_CACHE_BYTES = 96 * 1024 * 1024   # 96 MB decoded-pixmap budget
+    # 128 MB decoded-pixmap budget: holds every thumb of a typical
+    # 16-image theme at common window sizes (16 x ~6.4MB = 102MB for a
+    # ~1350px-wide preview) so the slideshow never has to re-decode an
+    # evicted image; larger windows or bigger themes evict oldest first.
+    _MAX_CACHE_BYTES = 128 * 1024 * 1024
     _EAGER_AHEAD = 2                      # images loaded ahead of current
     _THUMB_OVERSAMPLE = 1.25              # thumb long-edge = 1.25x PHYSICAL widget long-edge
     _THUMB_MIN = 1080                     # floor before first layout (widget is 0x0)
@@ -618,7 +622,14 @@ class ImageCrossFadeWidget(QWidget):
     # -- internals -------------------------------------------------------------
     def _scaled_for(self, idx: int):
         """Return the scaled pixmap for idx, scaling the cached raw pixmap on
-        demand if its thumb was never registered (lazy-load race)."""
+        demand if its thumb was never registered (lazy-load race).
+
+        If the raw pixmap was evicted by the LRU and no load is in flight,
+        the image is re-requested so the preview recovers instead of staying
+        on "Loading preview…" (this can happen after a resize rebuilds
+        _scaled from the cache, or when the slideshow wraps around to an
+        evicted image).  Returns None if the pixmap is not available yet."""
+        reload = False
         with self._state_lock:
             pm = self._scaled.get(idx)
             if pm is not None:
@@ -626,7 +637,15 @@ class ImageCrossFadeWidget(QWidget):
             t = self._thumb_paths.get(idx)
             if t is not None and t in self._raw_cache:
                 pm = self._scaled[idx] = self._scale_to_widget(self._raw_cache[t])
-        return pm
+                return pm
+            if t is not None and t not in self._loading:
+                # Evicted from the LRU and not currently loading: drop the
+                # mapping so _request() restarts the thumbnail pipeline.
+                self._thumb_paths.pop(idx, None)
+                reload = True
+        if reload:
+            self._request(idx)
+        return None
 
     def _advance(self):
         with self._state_lock:
@@ -728,8 +747,10 @@ class ImageCrossFadeWidget(QWidget):
             n = len(self._images)
             idx = self._idx if n else 0
             blend = self._blend
-            cur = self._scaled.get(idx) if n else None
-            nxt = self._scaled.get((idx + 1) % n) if (n and blend > 0.001) else None
+        # Resolve pixmaps outside the lock: _scaled_for() may trigger a
+        # background re-request when a raw pixmap was LRU-evicted.
+        cur = self._scaled_for(idx) if n else None
+        nxt = self._scaled_for((idx + 1) % n) if (n and blend > 0.001) else None
 
         if n == 0:
             # Draw dashed placeholder
