@@ -188,6 +188,55 @@ class TestHideShow:
         assert w._timer.isActive(), "timer must resume after show"
 
 
+class TestSeamlessSecondCycle:
+    def test_second_cycle_stays_seamless(self, qapp, tmp_path, monkeypatch):
+        """With a budget that evicts, the slideshow must not flash
+        "Loading preview…" on the second pass: the eager path must
+        re-request images whose decoded pixmap was LRU-evicted, well
+        ahead of display."""
+        from kwallpaper import themes
+        monkeypatch.setattr(themes, "DEFAULT_CACHE_DIR", tmp_path / "cache")
+        tdir = tmp_path / "EvictTheme"
+        tdir.mkdir()
+        paths = []
+        for i in range(16):
+            p = tdir / f"ev_{i:02d}.jpg"
+            _make_jpeg(p, 4000, 2250, 0x10 * (i + 1) * 0x010101)
+            paths.append(str(p))
+
+        w = wallpaper_gui.ImageCrossFadeWidget()
+        w.resize(1600, 900)   # 1600px thumbs, 5.8MB each -> ~8 fit in 48MB
+        w.show()
+        _spin(qapp, 0.1)
+        # Fast-forward the slideshow: 300ms steps, 100ms fades.
+        w._timer.setInterval(300)
+        w._anim.setDuration(100)
+        w.set_images(paths)
+
+        loading_after = []
+        t_start = time.time()
+        orig_paint = wallpaper_gui.ImageCrossFadeWidget.paintEvent
+
+        def patched_paint(self, event):
+            with self._state_lock:
+                have = self._scaled.get(self._idx) is not None
+            if not have and time.time() - t_start > 6.0:
+                loading_after.append(time.time())
+            orig_paint(self, event)
+
+        wallpaper_gui.ImageCrossFadeWidget.paintEvent = patched_paint
+        try:
+            w.start()
+            _spin(qapp, 12.0)   # ~2.5 cycles (16 x 0.3s = 4.8s each)
+        finally:
+            wallpaper_gui.ImageCrossFadeWidget.paintEvent = orig_paint
+            w.stop()
+        # After the first cycle (6s in), every image must show without a
+        # "Loading preview…" frame.
+        assert not loading_after, \
+            f"{len(loading_after)} loading frames after first cycle"
+
+
 class TestThumbSize:
     def test_no_oversample(self, qapp, tmp_path, monkeypatch):
         from kwallpaper import themes

@@ -420,6 +420,7 @@ class ImageCrossFadeWidget(QWidget):
         self._loading: set[str] = set()          # thumb paths in flight
         self._token = _LoadToken()               # bump to cancel in-flight
         self._running = False                    # slideshow timer requested
+        self._ensuring = set()                   # srcs with in-flight _ThumbnailWorkers
         # Guards all state above.  Every access happens on the GUI thread
         # (Qt guarantees single-threaded widget access), but the lock makes
         # the invariants explicit and protects the state from being mutated
@@ -520,6 +521,7 @@ class ImageCrossFadeWidget(QWidget):
             self._scaled.clear()
             self._thumb_paths.clear()
             self._loading.clear()
+            self._ensuring.clear()
             self._blend = 0.0
         super().hideEvent(event)
 
@@ -552,13 +554,27 @@ class ImageCrossFadeWidget(QWidget):
                    min(self._THUMB_MAX, phys_long_edge * self._THUMB_OVERSAMPLE))
 
     def _request(self, idx: int):
-        """Kick off the thumbnail + pixmap pipeline for one image."""
+        """Kick off the thumbnail + pixmap pipeline for one image.
+
+        Re-requests even when the thumb path is already known
+        (_thumb_paths) if the decoded pixmap is no longer in the raw
+        cache: the mapping only records that the path is known, not
+        that the decode is still resident.  This is what keeps the
+        slideshow seamless under a small raw budget — the eager path
+        re-decodes evicted images one step ahead of display."""
         with self._state_lock:
             if not (0 <= idx < len(self._images)):
                 return
             path = self._images[idx]
-            if idx in self._thumb_paths or idx in self._scaled:
+            if idx in self._scaled:
                 return
+            t = self._thumb_paths.get(idx)
+            if t is not None \
+                    and (t in self._raw_cache or t in self._loading):
+                return
+            if path in self._ensuring:
+                return
+            self._ensuring.add(path)
         self._pool.start(_ThumbnailWorker(
             path, self._signals, self._token,
             thumb_size=self._desired_thumb_size()))
@@ -568,6 +584,7 @@ class ImageCrossFadeWidget(QWidget):
         # in flight, src is no longer in _images and we must not touch state.
         # (list.index() would raise ValueError on the GUI thread.)
         with self._state_lock:
+            self._ensuring.discard(src)
             if src not in self._images:
                 return
             idx = self._images.index(src)
